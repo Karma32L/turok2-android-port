@@ -200,22 +200,33 @@ bool keptProp(std::string_view key) {
     return false;
 }
 
-// Los valores de kexScriptComponent terminan en '\n'
-std::string_view trimValue(std::string_view v) {
-    while (!v.empty() && (v.back() == '\n' || v.back() == '\r' || v.back() == ' ' || v.back() == '\t')) v.remove_suffix(1);
-    while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
-    return v;
+bool blank(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+// Valor de una propiedad: cadena terminada en NUL de como mucho maxLen bytes, ASCII imprimible o
+// espacio en blanco (en algunos mapas los valores de kexScriptComponent terminan en '\n'), sin
+// espacios alrededor. nullopt si es más larga, no tiene NUL o lleva otros bytes de control.
+std::optional<std::string> propValue(ByteView node, std::size_t maxLen) {
+    const auto leaf = kex::asLeaf(node);
+    if (!leaf || leaf->count != 1 || leaf->stride == 0) return std::nullopt;
+    const ByteView d = leaf->data;
+    std::size_t n = 0;
+    for (; n < d.size && d.data[n] != 0; ++n) {
+        const char c = static_cast<char>(d.data[n]);
+        if (n > maxLen + 8 || ((c < 0x20 || c >= 0x7F) && !blank(c))) return std::nullopt;
+    }
+    if (n == d.size) return std::nullopt;  // sin NUL
+    std::string_view v(reinterpret_cast<const char*>(d.data), n);
+    while (!v.empty() && blank(v.back())) v.remove_suffix(1);
+    while (!v.empty() && blank(v.front())) v.remove_prefix(1);
+    if (v.size() > maxLen) return std::nullopt;
+    return std::string(v);
 }
 
 void collectProps(const std::vector<ByteView>& kv, const MapLimits& l, MapActor& a) {
     for (std::size_t i = 0; i + 1 < kv.size(); i += 2) {
         const auto key = kex::leafString(kv[i]);
         if (!key || !keptProp(*key)) continue;
-        const auto value = kex::leafString(kv[i + 1]);
-        if (!value) continue;
-        const std::string_view v = trimValue(*value);
-        if (v.size() > l.maxPropValue) continue;
-        a.props.kv.emplace_back(*key, std::string(v));
+        if (auto v = propValue(kv[i + 1], l.maxPropValue)) a.props.kv.emplace_back(*key, std::move(*v));
     }
 }
 
