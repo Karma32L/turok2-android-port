@@ -21,9 +21,11 @@ layout(location = 2) in vec3 aNormal;
 uniform mat4 uViewProj;
 out vec2 vUV;
 out vec3 vNormal;
+out vec3 vWorld;
 void main() {
     vUV = aUV;
     vNormal = aNormal;
+    vWorld = aPos;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 }
 )";
@@ -38,8 +40,12 @@ uniform float uFullbright;  // 1 = sin iluminación
 uniform vec3 uSunDir;       // hacia el sol, normalizado
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
+uniform vec3 uCamPos;
+uniform vec3 uFogColor;
+uniform vec2 uFogRange;     // (inicio, 1 / (fin - inicio)); sin niebla: inicio enorme
 in vec2 vUV;
 in vec3 vNormal;
+in vec3 vWorld;
 out vec4 oColor;
 void main() {
     vec4 c = texture(uTex, vUV) * uDiffuse;
@@ -48,6 +54,9 @@ void main() {
     vec3 n = normalize(gl_FrontFacing ? vNormal : -vNormal);
     vec3 light = uAmbient + uSunColor * max(dot(n, uSunDir), 0.0);
     c.rgb *= mix(light, vec3(1.0), uFullbright);
+    // Niebla lineal por distancia a la cámara (por área del nivel, ver FogParams)
+    float fog = clamp((distance(vWorld, uCamPos) - uFogRange.x) * uFogRange.y, 0.0, 1.0);
+    c.rgb = mix(c.rgb, uFogColor, fog);
     oColor = c;
 }
 )";
@@ -80,7 +89,9 @@ render::Image whiteImage() {
     return img;
 }
 
-std::optional<render::gl::Texture> loadTexture(const vfs::Vfs& fs, const std::string& path) {
+}  // namespace
+
+std::optional<render::gl::Texture> loadVfsTexture(const vfs::Vfs& fs, const std::string& path) {
     auto data = fs.read(path);
     if (!data || data->size() > kMaxTextureBytes) {
         LOGE("WORLD: textura %s ausente o demasiado grande", path.c_str());
@@ -96,8 +107,6 @@ std::optional<render::gl::Texture> loadTexture(const vfs::Vfs& fs, const std::st
     if (!tex) LOGE("WORLD: textura %s: %s", path.c_str(), err.c_str());
     return tex;
 }
-
-}  // namespace
 
 WorldRenderer::~WorldRenderer() { release(); }
 
@@ -133,6 +142,9 @@ bool WorldRenderer::initProgram(std::string* err) {
     uSunDir_ = glGetUniformLocation(program_, "uSunDir");
     uSunColor_ = glGetUniformLocation(program_, "uSunColor");
     uAmbient_ = glGetUniformLocation(program_, "uAmbient");
+    uCamPos_ = glGetUniformLocation(program_, "uCamPos");
+    uFogColor_ = glGetUniformLocation(program_, "uFogColor");
+    uFogRange_ = glGetUniformLocation(program_, "uFogRange");
     return true;
 }
 
@@ -190,7 +202,7 @@ bool WorldRenderer::init(const LevelGeometry& geo, const vfs::Vfs& fs, UploadSta
         auto it = byPath.find(path);
         if (it == byPath.end()) {
             std::size_t idx = 0;
-            if (auto tex = loadTexture(fs, path)) {
+            if (auto tex = loadVfsTexture(fs, path)) {
                 textures_.push_back(std::move(*tex));
                 idx = textures_.size() - 1;
                 ++st.textures;
@@ -252,10 +264,15 @@ bool WorldRenderer::init(const LevelGeometry& geo, const vfs::Vfs& fs, UploadSta
     return true;
 }
 
-void WorldRenderer::draw(const Mat4& viewProj) {
+void WorldRenderer::draw(const Mat4& viewProj, Vec3 camPos, const FogParams& fog) {
     if (!ready()) return;
     glUseProgram(program_);
     glUniformMatrix4fv(uViewProj_, 1, GL_FALSE, viewProj.m);
+    float range[2];
+    fogRange(fog, range);
+    glUniform3f(uCamPos_, camPos.x, camPos.y, camPos.z);
+    glUniform3fv(uFogColor_, 1, fog.color);
+    glUniform2fv(uFogRange_, 1, range);
     glUniform1i(uTex_, 0);
     glUniform3fv(uSunDir_, 1, kSunDir);
     glUniform3fv(uSunColor_, 1, kSunColor);

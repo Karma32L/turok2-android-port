@@ -15,6 +15,7 @@ add_subdirectory(render)
 add_subdirectory(audio)
 add_subdirectory(ui)
 add_subdirectory(render3d)
+add_subdirectory(physics)
 
 # Debe ser SHARED: SDLActivity carga libturok2.so y busca SDL_main en ella
 add_library(turok2 SHARED
@@ -24,6 +25,7 @@ add_library(turok2 SHARED
     vfs/vfs_sdl.cpp
     render/gl/gl_renderer.cpp
     render3d/gl/world_renderer.cpp
+    render3d/gl/sky_renderer.cpp
     audio/audio_sdl.cpp
     input/input_sdl.cpp)
 # src/ como raíz de includes de la app (log.hpp, "audio/...", "ui/...")
@@ -33,5 +35,5 @@ target_include_directories(turok2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 turok2_strict(turok2)
 
 target_link_libraries(turok2 PRIVATE
-    turok2_vfs turok2_loc turok2_render_core turok2_render3d_core turok2_audio_core turok2_ui_core
+    turok2_vfs turok2_loc turok2_render_core turok2_render3d_core turok2_physics_core turok2_audio_core turok2_ui_core
     SDL2::SDL2 GLESv3 log)

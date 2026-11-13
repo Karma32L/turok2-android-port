@@ -43,6 +43,17 @@ std::optional<MenuAction> menuActionFromEvent(const SDL_Event& ev) {
     return std::nullopt;
 }
 
+std::optional<MenuAction> worldActionFromEvent(const SDL_Event& ev) {
+    if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+        const SDL_Scancode sc = ev.key.keysym.scancode;
+        if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_AC_BACK) return MenuAction::Back;
+    }
+    if (ev.type == SDL_CONTROLLERBUTTONDOWN && ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+        return MenuAction::Back;
+    }
+    return std::nullopt;
+}
+
 void StickPoller::poll(const std::vector<SDL_GameController*>& controllers, std::uint32_t nowMs,
                        std::vector<MenuAction>& out) {
     // Con varios mandos manda el eje con mayor desviación
@@ -93,6 +104,22 @@ PadFly readPadFly(const std::vector<SDL_GameController*>& controllers) {
     out.move = {clampUnit(out.move.x), clampUnit(out.move.y)};
     out.look = {clampUnit(out.look.x), clampUnit(out.look.y)};
     out.up = clampUnit(out.up);
+    return out;
+}
+
+PadActions PadActionReader::read(const std::vector<SDL_GameController*>& controllers) {
+    PadActions out;
+    bool back = false;
+    for (SDL_GameController* gc : controllers) {
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_A)) out.jump = true;
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_B) ||
+            SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSTICK)) {
+            out.crouch = true;
+        }
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_BACK)) back = true;
+    }
+    out.toggleFly = back && !backWasDown_;
+    backWasDown_ = back;
     return out;
 }
 

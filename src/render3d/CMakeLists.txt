@@ -9,7 +9,8 @@ add_library(turok2_render3d_core STATIC
     static_mesh.cpp
     kmat.cpp
     level_builder.cpp
-    fly_camera.cpp)
+    fly_camera.cpp
+    atmosphere.cpp)
 target_include_directories(turok2_render3d_core PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 # turok2_vfs: normalizePath y lectura de archivos; turok2_render_core: text_parse.hpp
 target_link_libraries(turok2_render3d_core PUBLIC turok2_vfs PRIVATE turok2_render_core)

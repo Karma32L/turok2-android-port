@@ -85,11 +85,14 @@ std::optional<LevelGeometry> buildLevel(const vfs::Vfs& fs, std::string_view map
     const auto bytes = fs.read(mapPath);
     if (!bytes) return fail(err, "no se pudo leer " + std::string(mapPath));
     std::string why;
-    const auto map = parseMap(ByteView(*bytes), &why);
+    auto map = parseMap(ByteView(*bytes), &why);
     if (!map) return fail(err, std::string(mapPath) + ": " + why);
 
     LevelGeometry geo;
     geo.start = map->start;
+    geo.skyLayers = std::move(map->skyLayers);
+    geo.collision = std::move(map->collision);
+    if (!map->collisionError.empty() && log) log(std::string(mapPath) + ": colisión descartada: " + map->collisionError);
     geo.stats.skippedInstances = map->skippedInstances;
     MaterialResolver materials(fs, log, geo.stats);
     std::unordered_map<std::string, std::optional<StaticMesh>> meshes;
@@ -145,7 +148,12 @@ std::optional<LevelGeometry> buildLevel(const vfs::Vfs& fs, std::string_view map
         ++geo.stats.instances;
     }
 
+    // Materiales de las capas de cielo: misma resolución (y caché de .kmat) que las mallas
+    std::vector<std::size_t> skyIdx;
+    for (const SkyLayer& l : geo.skyLayers) skyIdx.push_back(materials.resolve(l.material));
+
     geo.materials = materials.take();
+    for (std::size_t i : skyIdx) geo.skyMaterials.push_back(geo.materials[i]);
     geo.indices.reserve(totalIndices);
     for (std::size_t mi = 0; mi < perMaterial.size(); ++mi) {
         const auto& idx = perMaterial[mi];

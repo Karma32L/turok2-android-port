@@ -110,3 +110,44 @@ TEST(sticks_entradas_invalidas) {
     t.fingerDown(2, 1500, 500);
     CHECK(t.takeLookDelta().x == 0.0f);
 }
+
+TEST(botones_de_accion) {
+    TouchSticks t = sticks();  // lado corto 1000: botones de 170 px abajo a la derecha
+    using input::Button;
+    const ui::Rect j = t.buttonRect(Button::Jump), c = t.buttonRect(Button::Crouch), f = t.buttonRect(Button::Fly);
+    // Dentro de la pantalla, en la mitad derecha y sin solaparse entre sí ni con la salida
+    for (const ui::Rect& r : {j, c, f}) {
+        CHECK(r.x >= 1000.0f && r.x + r.w <= 2000.0f && r.y >= 0.0f && r.y + r.h <= 1000.0f);
+        CHECK(!t.exitRect().contains(r.x + r.w / 2, r.y + r.h / 2));
+    }
+    CHECK(!j.contains(c.x + c.w / 2, c.y + c.h / 2) && !c.contains(j.x + j.w / 2, j.y + j.h / 2));
+    CHECK(f.y < 200.0f);
+
+    CHECK(!t.held(Button::Jump) && !t.takePressed(Button::Jump));
+    t.fingerDown(1, j.x + 5, j.y + 5);
+    CHECK(t.held(Button::Jump) && !t.held(Button::Crouch));
+    // Arrastrar el dedo del botón no gira la cámara
+    t.fingerMotion(1, j.x - 300, j.y - 300);
+    const auto d = t.takeLookDelta();
+    CHECK(d.x == 0.0f && d.y == 0.0f && t.held(Button::Jump));
+    CHECK(t.takePressed(Button::Jump) && !t.takePressed(Button::Jump));  // flanco una sola vez
+    t.fingerUp(1, j.x - 300, j.y - 300);
+    CHECK(!t.held(Button::Jump));
+
+    // Pulsación corta entre dos frames: el flanco no se pierde
+    t.fingerDown(2, f.x + 1, f.y + 1);
+    t.fingerUp(2, f.x + 1, f.y + 1);
+    CHECK(!t.held(Button::Fly) && t.takePressed(Button::Fly));
+
+    // Botón y cámara a la vez con dos dedos
+    t.fingerDown(3, c.x + 10, c.y + 10);
+    t.fingerDown(4, 1200, 300);
+    t.fingerMotion(4, 1250, 300);
+    CHECK(t.held(Button::Crouch) && near(t.takeLookDelta().x, 50.0f));
+    // Un segundo dedo sobre un botón ocupado no lo libera al levantarse
+    t.fingerDown(5, c.x + 20, c.y + 20);
+    t.fingerUp(5, c.x + 20, c.y + 20);
+    CHECK(t.held(Button::Crouch));
+    t.reset();
+    CHECK(!t.held(Button::Crouch) && !t.takePressed(Button::Crouch));
+}
