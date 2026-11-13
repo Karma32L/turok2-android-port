@@ -24,6 +24,7 @@ add_subdirectory(${SRC_DIR}/ui ${CMAKE_BINARY_DIR}/ui)
 add_subdirectory(${SRC_DIR}/render3d ${CMAKE_BINARY_DIR}/render3d)
 add_subdirectory(${SRC_DIR}/physics ${CMAKE_BINARY_DIR}/physics)
 add_subdirectory(${SRC_DIR}/game ${CMAKE_BINARY_DIR}/game)
+add_subdirectory(${SRC_DIR}/combat ${CMAKE_BINARY_DIR}/combat)
 include(${SRC_DIR}/cmake/Strict.cmake)
 
 add_executable(vfs_tests test_main.cpp test_vfs.cpp)
@@ -38,7 +39,7 @@ add_executable(render_tests test_main.cpp test_png.cpp test_kfont.cpp test_text_
 target_link_libraries(render_tests PRIVATE turok2_render_core turok2_loc miniz)
 turok2_strict(render_tests)
 
-add_executable(audio_tests test_main.cpp test_wav.cpp test_ogg.cpp test_mixer.cpp)
+add_executable(audio_tests test_main.cpp test_wav.cpp test_ogg.cpp test_mixer.cpp test_ksnd.cpp)
 target_link_libraries(audio_tests PRIVATE turok2_audio_core)
 turok2_strict(audio_tests)
 
@@ -62,6 +63,11 @@ add_executable(game_tests test_main.cpp test_weapon_view.cpp)
 target_link_libraries(game_tests PRIVATE turok2_game_core)
 turok2_strict(game_tests)
 
+add_executable(combat_tests test_main.cpp test_event_links.cpp test_projectile.cpp test_enemy_ai.cpp
+    test_level_logic.cpp test_real_combat.cpp)
+target_link_libraries(combat_tests PRIVATE turok2_combat_core turok2_vfs miniz)
+turok2_strict(combat_tests)
+
 enable_testing()
 add_test(NAME vfs COMMAND vfs_tests)
 add_test(NAME loc COMMAND loc_tests)
@@ -71,3 +77,4 @@ add_test(NAME ui COMMAND ui_tests)
 add_test(NAME render3d COMMAND render3d_tests)
 add_test(NAME physics COMMAND physics_tests)
 add_test(NAME game COMMAND game_tests)
+add_test(NAME combat COMMAND combat_tests)

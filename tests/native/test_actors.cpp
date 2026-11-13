@@ -233,3 +233,109 @@ TEST(actores_animacion_y_matrices) {
     CHECK(near(mm.at(0, 0), 2.0f * std::cos(yaw)) && near(mm.at(1, 0), 2.0f * std::sin(yaw)));
     CHECK(near(mm.at(0, 3), 5.0f) && near(mm.at(2, 2), 2.0f));
 }
+
+TEST(actores_tid_cilindro_y_propiedades_de_logica) {
+    kb::Props script{{"scriptClass", "TurokDoor\n"}, {"openEvent", " 63\r\n"}, {"triggerSound", std::string(200, '7')},
+                     {"idleAnim", std::string("1\x01", 2)}};  // byte de control: se rechaza
+    for (int i = 0; i < 300; ++i) script.push_back({"arg" + std::to_string(i), "1\n"});  // sin límite de pares
+    const auto m = parse({
+        kb::actorWith(1601, {0, 0, 0},
+                      {{"kexScriptComponent", script},
+                       {"kexWorldComponent", {{"radius", "30.719999"}, {"height", "102.399994"}, {"bNonSolid", "1"}}}},
+                      {1, 1, 1}, {}, 27),
+        kb::actorWith(kActorActionCommon, {0, 0, 0},
+                      {{"kexEventLinkComponent",
+                        {{"sourceTID", "24"}, {"targetTID", "27"}, {"triggerType", "1"}, {"userValue", "0.099609"},
+                         {"flags", "17072178"}, {"triggerText", "$str_001"}}}}),
+        kb::actorWith(5, {0, 0, 0}, {{"kexWorldComponent", {{"radius", "-3"}, {"height", "1e9"}}}}),
+    });
+    CHECK(m.has_value());
+    if (!m || m->actors.size() != 3) {
+        CHECK(false);
+        return;
+    }
+    const MapActor& door = m->actors[0];
+    CHECK(door.tid() == 27 && near(door.radius, 30.72f, 1e-3f) && near(door.height, 102.4f, 1e-3f) && door.nonSolid);
+    CHECK(door.props.text("scriptClass") == "TurokDoor" && door.props.number("openEvent", -1.0f) == 63.0f);
+    CHECK(door.props.text("triggerSound").empty());  // valor de más de maxPropValue: ignorado
+    CHECK(door.props.text("arg0").empty() && door.props.kv.size() == 2);  // solo claves de la lista blanca
+    const MapActor& link = m->actors[1];
+    CHECK(link.eventLink && link.tid() == -1);
+    CHECK(link.props.number("sourceTID", 0.0f) == 24.0f && link.props.number("targetTID", 0.0f) == 27.0f);
+    CHECK(near(link.props.number("userValue", 0.0f), 0.099609f, 1e-5f));
+    CHECK(link.props.number("flags", 0.0f) == 17072178.0f);  // entero de 8 cifras
+    CHECK(!link.props.number("triggerText"));                 // no es un número (y no se guarda)
+    CHECK(m->actors[2].radius == 0.0f && m->actors[2].height == 0.0f);  // negativos y absurdos: rechazados
+}
+
+namespace {
+
+// ActorSet construido a mano: 2 huesos (raíz + hijo), 2 vértices y clips con eventos y con avance
+// de la raíz (−10 en Y por frame), sin VFS
+ActorSet handSet() {
+    sb::Clip walk = sb::fixedClip(2, 2000);
+    walk.frames = 3;
+    walk.numTrans = 1;
+    walk.transTrack[0] = 0;
+    walk.trans = {{0, 0, 0}, {0, -10, 0}, {0, -20, 0}};
+    walk.events = {{1, render3d::kEvMeleeDamage, {2304, 512}}};
+    sb::Clip idle = sb::fixedClip(2, kAnimGroundIdle1);
+    idle.frames = 4;
+    auto anims = parseAnimSet(ByteView(sb::anim({idle, walk})));
+    CHECK(anims.has_value());
+    ActorSet set;
+    ActorModel m;
+    m.path = "a mano";
+    m.mesh.parents = {-1, 0};
+    m.mesh.vertices = {SkinnedVertex{{-1, -2, 0}, {0, 0}, {0, 0, 1}, 0, 0}, SkinnedVertex{{0, 0, 3}, {0, 0}, {0, 0, 1}, 1, 0}};
+    m.anims = std::move(anims);
+    set.models.push_back(std::move(m));
+    ActorInstance inst;
+    inst.clip = 0;
+    inst.loop = true;
+    set.instances.push_back(inst);
+    return set;
+}
+
+}  // namespace
+
+TEST(actores_reproducir_una_vez_eventos_y_visibilidad) {
+    ActorSet set = handSet();
+    ActorInstance& a = set.instances[0];
+    CHECK(!set.play(a, 12345, false) && a.clip == 0);  // id inexistente: no cambia nada
+    CHECK(set.play(a, 2000, false) && a.playing && !a.loop && !set.finished(a));
+    std::vector<ClipEvent> ev;
+    set.update(0.1f, &ev);  // [0, 0,1): el evento del frame 1 (0,0667 s)
+    CHECK(ev.size() == 1 && ev[0].instance == 0 && ev[0].event->type == render3d::kEvMeleeDamage);
+    ev.clear();
+    set.update(1.0f, &ev);
+    CHECK(ev.empty() && set.finished(a) && near(a.time, 0.2f));  // se queda en el final
+    // rate: a mitad de velocidad tarda el doble
+    CHECK(set.play(a, 2000, false));
+    a.rate = 0.5f;
+    set.update(0.2f);
+    CHECK(near(a.time, 0.1f) && !set.finished(a));
+    // Invisible: ni avanza ni emite
+    a.visible = false;
+    set.update(0.05f, &ev);
+    CHECK(near(a.time, 0.1f) && ev.empty());
+}
+
+TEST(actores_anular_avance_de_la_raiz_y_caja_posada) {
+    ActorSet set = handSet();
+    ActorInstance& a = set.instances[0];
+    CHECK(set.play(a, 2000, true));
+    a.time = 1.0f / 15.0f;  // frame 1: raíz en (0, −10, 0)
+    std::vector<BoneMatrix> pal;
+    set.palette(a, pal);
+    CHECK(pal.size() == 2 && near(pal[0].row[1][3], -10.0f) && near(pal[1].row[1][3], -9.0f));
+    a.stripRootMotion = true;
+    set.palette(a, pal);
+    CHECK(near(pal[0].row[1][3], 0.0f) && near(pal[1].row[1][3], 1.0f));  // el hijo (0, 1, 0) sigue a la raíz
+    Vec3 mn, mx;
+    CHECK(set.posedBounds(a, mn, mx));
+    CHECK(near(mn.x, -1.0f) && near(mn.y, -2.0f) && near(mx.y, 1.0f) && near(mx.z, 3.0f));
+    ActorSet empty = handSet();
+    empty.models[0].mesh.vertices.clear();
+    CHECK(!empty.posedBounds(empty.instances[0], mn, mx));
+}

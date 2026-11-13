@@ -84,6 +84,12 @@ struct Key {
     float q[4] = {0, 0, 0, 1};
 };
 
+// Evento de 50 B: u16 frame, u16 tipo, i16 hueso, f32 pos[3], f32 params[8]
+struct Event {
+    std::uint16_t frame = 0, type = 0;
+    std::array<float, 8> params{};
+};
+
 struct Clip {
     std::uint32_t id = 1;
     std::uint32_t frames = 2;
@@ -92,7 +98,8 @@ struct Clip {
     std::vector<Key> fixed;                           // por hueso
     std::vector<std::array<float, 3>> trans;          // numTrans × frames
     std::vector<std::array<float, 4>> rots;           // numRot × frames
-    std::uint32_t numTrans = 0, numRot = 0, numEvents = 0;
+    std::uint32_t numTrans = 0, numRot = 0, numEvents = 0;  // numEvents: eventos a cero si `events` está vacío
+    std::vector<Event> events;
     std::uint32_t bones2 = 0;  // 0 = igual que bones
 };
 
@@ -119,7 +126,8 @@ inline Bytes anim(const std::vector<Clip>& clips, std::uint32_t version = 2) {
         kb::put32(b, c.bones2 ? c.bones2 : nb);
         kb::put32(b, c.numTrans);
         kb::put32(b, c.numRot);
-        kb::put32(b, c.numEvents);
+        const auto numEvents = c.events.empty() ? c.numEvents : static_cast<std::uint32_t>(c.events.size());
+        kb::put32(b, numEvents);
         kb::putF(b, 2.0f);
         kb::put32(b, 3);
         kb::put16(b, 0);
@@ -138,7 +146,14 @@ inline Bytes anim(const std::vector<Clip>& clips, std::uint32_t version = 2) {
             for (float f : v) kb::putF(b, f);
         for (const auto& q : c.rots)
             for (float f : q) kb::putF(b, f);
-        b.resize(b.size() + std::size_t{c.numEvents} * 50, 0);
+        if (c.events.empty()) b.resize(b.size() + std::size_t{c.numEvents} * 50, 0);
+        for (const Event& e : c.events) {
+            kb::put16(b, e.frame);
+            kb::put16(b, e.type);
+            kb::put16(b, 0xFFFF);  // hueso -1
+            for (int k = 0; k < 3; ++k) kb::putF(b, 0.0f);
+            for (float f : e.params) kb::putF(b, f);
+        }
     }
     return b;
 }

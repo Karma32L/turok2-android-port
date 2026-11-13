@@ -129,3 +129,44 @@ TEST(arma_entradas_no_finitas) {
     const render3d::Vec3 o = w.offset();
     CHECK(std::isfinite(o.x) && std::isfinite(o.y) && std::isfinite(w.clipTime()));
 }
+
+TEST(arma_eventos_de_tensar_y_soltar_y_tiempo_de_carga) {
+    // Como el arco real: CHARGE con SFX 408 en el frame 0; ATK1 con SFX 410 y FIRE_PROJECTILE 86
+    std::vector<sb::Clip> clips;
+    for (std::uint32_t id : {game::kAnimWpnEnter, game::kAnimWpnIdle, game::kAnimWpnCharge, game::kAnimWpnAttack1}) {
+        sb::Clip c = sb::fixedClip(1, id);
+        c.frames = id == game::kAnimWpnCharge ? 2 : 3;
+        if (id == game::kAnimWpnCharge) c.events = {{0, render3d::kEvPlaySfx, {408}}};
+        if (id == game::kAnimWpnAttack1) {
+            c.events = {{0, render3d::kEvFireProjectile, {86}}, {0, render3d::kEvPlaySfx, {410}}};
+        }
+        clips.push_back(c);
+    }
+    const auto anims = render3d::parseAnimSet(render3d::ByteView(sb::anim(clips)));
+    CHECK(anims.has_value());
+    if (!anims) return;
+    WeaponView w(&*anims, 3);
+    run(w, {}, 0.25f);
+    std::vector<std::uint32_t> sounds;
+    int projectiles = 0;
+    auto step = [&](const WeaponInput& in, float seconds) {
+        for (float t = 0; t < seconds; t += 1.0f / 60.0f) {
+            w.update(in, 1.0f / 60.0f);
+            for (const render3d::AnimEvent* e : w.events()) {
+                if (e->type == render3d::kEvPlaySfx) sounds.push_back(e->soundId());
+                if (e->type == render3d::kEvFireProjectile) ++projectiles;
+            }
+        }
+    };
+    WeaponInput fire;
+    fire.fireHeld = true;
+    step(fire, 0.8f);  // tensar 0,8 s: un solo 408 aunque el clip se mantenga
+    CHECK(sounds.size() == 1 && sounds[0] == 408 && projectiles == 0);
+    step({}, 0.3f);  // soltar: 410 y un proyectil
+    CHECK(sounds.size() == 2 && sounds[1] == 410 && projectiles == 1);
+    CHECK(w.lastCharge() > 0.7f && w.lastCharge() < 0.85f && w.ammo() == 2);
+    // Toque corto: carga casi nula (el proyectil la acota a 0,5)
+    step(fire, 1.0f / 60.0f);
+    step({}, 0.3f);
+    CHECK(projectiles == 2 && w.lastCharge() < 0.05f);
+}
