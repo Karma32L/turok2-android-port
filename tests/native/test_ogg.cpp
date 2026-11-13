@@ -2,7 +2,7 @@
 //
 // No hay un codificador Vorbis en el repo, así que la decodificación positiva solo se prueba
 // si el usuario apunta TURK2_OGG_SAMPLE a un .ogg propio (nunca versionado), p. ej.:
-//   TURK2_OGG_SAMPLE=android/app/src/main/assets/game_data/music/n64/title.ogg ctest ...
+//   TURK2_OGG_SAMPLE=$PWD/android/app/src/main/assets/game_data/music/n64/title.ogg ctest ...
 #include "test.hpp"
 
 #include <ogg_music.hpp>
@@ -131,8 +131,12 @@ TEST(ogg_muestra_real_opcional) {
         return;
     }
     Bytes full = readFile(path);
-    CHECK(!full.empty());
-    if (full.empty()) return;
+    if (full.empty()) {
+        // ctest se ejecuta desde build-host/: usar una ruta absoluta
+        std::printf("  no se pudo leer TURK2_OGG_SAMPLE='%s' (¿ruta relativa?)\n", path);
+        CHECK(!full.empty());
+        return;
+    }
 
     // Prefijo de ~256 KiB: stream truncado (≈ 10 s), suficiente y rápido bajo ASan
     const std::size_t cut = std::min<std::size_t>(full.size(), 256u << 10);
