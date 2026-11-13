@@ -176,6 +176,7 @@ Vec2 PlayerController::moveHorizontal(Vec2 delta) {
     const Vec2 start = xy(feet_);
     if (!(length(delta) > 0.0f)) {
         pushOutOfWalls();
+        pushOutOfObstacles();
         return xy(feet_) - start;
     }
     const SectorWorld::PassFn pass = [this](int a, int b, Vec2 at) { return passable(a, b, at); };
@@ -206,8 +207,29 @@ Vec2 PlayerController::moveHorizontal(Vec2 delta) {
         const float f = world_->floorZ(sector_, xy(feet_));
         if (feet_.z < f) feet_.z = f;
         pushOutOfWalls();
+        pushOutOfObstacles();
     }
     return xy(feet_) - start;
+}
+
+void PlayerController::pushOutOfObstacles() {
+    if (!obstacles_ || obstacles_->empty()) return;
+    // Sub-pasos de medio radio (moveHorizontal): el cilindro no puede saltar al otro lado de una
+    // cápsula, así que el empuje siempre lo devuelve a su lado
+    Vec2 target = xy(feet_);
+    const float top = feet_.z + height();
+    for (const Obstacle& o : *obstacles_) {
+        if (!affects(o, self_) || !overlapsZ(o, feet_.z, top)) continue;
+        target = target + pushCircleOutOfSegment(target, t_.radius + o.radius, o.a, o.b);
+    }
+    const Vec2 d = target - xy(feet_);
+    if (!(length(d) > 1e-4f)) return;
+    // El empuje respeta las paredes (no saca el cilindro de la malla)
+    const auto tr = world_->trace(sector_, xy(feet_), target,
+                                  [this](int a, int b, Vec2 at) { return passable(a, b, at); });
+    feet_.x = tr.end.x;
+    feet_.y = tr.end.y;
+    sector_ = tr.sector;
 }
 
 void PlayerController::pushOutOfWalls() {

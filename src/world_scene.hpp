@@ -21,6 +21,7 @@
 #include "kfont.hpp"
 #include "level_actors.hpp"
 #include "level_builder.hpp"
+#include "level_logic.hpp"
 #include "player_controller.hpp"
 #include "render/gl/gl_renderer.hpp"
 #include "render3d/gl/skinned_renderer.hpp"
@@ -58,6 +59,8 @@ private:
     bool initGl(const vfs::Vfs& fs);
     void initHudGl(const vfs::Vfs& fs);
     void loadActors(const vfs::Vfs& fs);
+    void loadLogic();
+    void applyLogic(const combat::LogicOutput& out);
     void loadWeapon(const vfs::Vfs& fs);
     void updateWeapon(const input::PadActions& act, const physics::PlayerInput& in, float dt);
     void drawActors(const render3d::Mat4& vp, render3d::Vec3 eye);
@@ -81,6 +84,9 @@ private:
     // Actores del nivel (CPU) y su renderer
     std::optional<render3d::ActorSet> actors_;
     render3d::gl::SkinnedRenderer actorRenderer_;
+    // Puertas, interruptores y EventLinks; apunta a actors_ y world_ (se destruye antes)
+    std::optional<combat::LevelLogic> logic_;
+    combat::LogicOutput logicOut_;  // reutilizada entre frames
     // Arma: modelo (un ActorSet de 1 modelo) y lógica; weapon_ apunta a las animaciones de
     // weaponModel_, así que se destruye antes
     std::optional<render3d::ActorSet> weaponModel_;

@@ -197,6 +197,22 @@ void WorldScene::loadActors(const vfs::Vfs& fs) {
          actors_->materials.size(), st.materialsMissing, actors_->markers.size());
 }
 
+void WorldScene::loadLogic() {
+    if (!actors_) return;
+    std::vector<std::string> log;
+    logic_.emplace(geo_->actors, *actors_, world_ ? &*world_ : nullptr, combat::LogicTuning{}, &log);
+    for (const std::string& l : log) LOGI("WORLD: lógica: %s", l.c_str());
+}
+
+void WorldScene::applyLogic(const combat::LogicOutput& out) {
+    for (const std::string& l : out.log) LOGI("WORLD: %s", l.c_str());
+    for (std::uint32_t id : out.sounds) playSound(id);
+    if (out.playerDamage > 0) {
+        health_ = std::max(health_ - out.playerDamage, 0);
+        LOGI("WORLD: el jugador recibe %d de daño (vida %d)", out.playerDamage, health_);
+    }
+}
+
 void WorldScene::loadSounds(const vfs::Vfs& fs) {
     // El lector copia el puntero al VFS: la escena se descarga antes de que main() lo destruya
     const vfs::Vfs* vfs = &fs;
@@ -318,6 +334,7 @@ bool WorldScene::load(const vfs::Vfs& fs) {
     }
 
     loadActors(fs);
+    loadLogic();
     loadWeapon(fs);
     loadSounds(fs);
     health_ = 100;
@@ -329,6 +346,7 @@ bool WorldScene::load(const vfs::Vfs& fs) {
 
     // Jugador: en el inicio del .map o, si no hay, en vuelo sobre el centro del nivel
     player_.emplace(world_ ? &*world_ : nullptr);
+    if (logic_) player_->setObstacles(&logic_->obstacles());  // puertas cerradas, barriles, enemigos
     if (geo_->start) {
         const render3d::Vec3 p = geo_->start->pos;
         // El yaw del actor usa la convención del .map, Rz(-r0): en la cámara es -r0
@@ -356,10 +374,11 @@ void WorldScene::unload() {
     weaponRenderer_.release();
     weapon_.reset();  // antes que weaponModel_, a cuyas animaciones apunta
     weaponModel_.reset();
+    player_.reset();  // antes que world_ y logic_, a los que apunta
+    logic_.reset();   // antes que actors_ y world_
     actors_.reset();
     sounds_.reset();
     numbers_.reset();
-    player_.reset();  // antes que world_, al que apunta
     world_.reset();
     hud_.reset();
     disc_ = {};
@@ -441,7 +460,18 @@ void WorldScene::update(float dt, const std::vector<SDL_GameController*>& contro
     in.pitchDelta = -touchLook.y * lookScale - pad.look.y * kPadLookRate * padDt;
     in.fast = pad.fast;
     player.update(in, dt);
-    if (actors_) actors_->update(dt);
+    if (logic_) {
+        logicOut_ = {};
+        combat::PlayerState ps;
+        ps.feet = player.feet();
+        ps.radius = player.tuning().radius;
+        ps.height = player.tuning().standHeight;
+        ps.alive = player.mode() != physics::MoveMode::Fly && health_ > 0;
+        logic_->update(dt, ps, logicOut_);
+        applyLogic(logicOut_);
+    } else if (actors_) {
+        actors_->update(dt);
+    }
     updateWeapon(act, in, padDt);
 
     if (player.mode() != lastMode_ || player.areaIndex() != lastArea_) {
