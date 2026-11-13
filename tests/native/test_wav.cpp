@@ -123,6 +123,38 @@ TEST(wav_chunks_ausentes_o_duplicados) {
     CHECK(failsWith(wb::riff({wb::chunk("fmt ", Bytes(10, 0)), wb::chunk("data", wb::samples({1}))}), "corto"));
 }
 
+TEST(wav_riff_menor_que_cabecera) {
+    // Regresión: tamaño RIFF 0..3 deja end < 12 y antes provocaba lectura fuera de límites
+    for (std::uint8_t riff = 0; riff < 4; ++riff) {
+        const Bytes minimal{'R', 'I', 'F', 'F', riff, 0, 0, 0, 'W', 'A', 'V', 'E'};
+        CHECK(failsWith(minimal, "RIFF inválido"));
+        // También con un WAV válido detrás: el tamaño declarado manda
+        Bytes full = simple({}, wb::samples({1, 2, 3, 4}));
+        full[4] = riff;
+        full[5] = full[6] = full[7] = 0;
+        CHECK(failsWith(full, "RIFF inválido"));
+    }
+    // RIFF = 4 (solo "WAVE"): cabecera coherente pero sin chunks
+    Bytes four = simple({}, wb::samples({1}));
+    four[4] = 4;
+    four[5] = four[6] = four[7] = 0;
+    CHECK(failsWith(four, "falta el chunk fmt"));
+}
+
+TEST(wav_todos_los_tamanos_riff_no_rompen) {
+    // Recorre valores del campo RIFF (pequeños, alrededor del real y extremos): ASan vigila
+    const Bytes base = wb::riff({wb::chunk("fmt ", wb::fmtBody({})), wb::chunk("data", wb::samples({1, 2, 3}))});
+    std::vector<std::uint32_t> values;
+    for (std::uint32_t v = 0; v <= base.size() + 8; ++v) values.push_back(v);
+    for (std::uint32_t v : {0x7FFFFFFFu, 0x80000000u, 0xFFFFFFF7u, 0xFFFFFFF8u, 0xFFFFFFFFu}) values.push_back(v);
+    for (std::uint32_t v : values) {
+        Bytes b = base;
+        for (int i = 0; i < 4; ++i) b[4 + static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(v >> (8 * i));
+        auto p = audio::parseWav(b.data(), b.size(), nullptr);
+        if (p) CHECK(p->frames() == 3);
+    }
+}
+
 TEST(wav_truncado_en_cada_byte_no_rompe) {
     // Cualquier prefijo debe fallar limpio o decodificar algo coherente (ASan vigila)
     const Bytes full = wb::riff({wb::chunk("fmt ", wb::fmtBody({})), wb::chunk("LIST", Bytes{9}),

@@ -27,6 +27,9 @@ std::optional<Pcm> parseWav(const std::uint8_t* data, std::size_t size, std::str
 
     // size <= 16 MiB, así que 8 + riff cabe en uint64 sin desbordar
     const std::size_t end = static_cast<std::size_t>(std::min<std::uint64_t>(size, 8ull + le32(data + 4)));
+    // Un tamaño RIFF < 4 deja `end` antes del primer chunk: sin esta comprobación,
+    // `end - off` desborda (size_t) y el bucle leería fuera del buffer
+    if (end < 12) return fail(err, "WAV: tamaño RIFF inválido");
 
     bool haveFmt = false;
     std::uint16_t channels = 0, blockAlign = 0;
