@@ -1,12 +1,13 @@
 # Núcleo de UI y entrada independiente de SDL/GL: geometría de pantalla, navegación de
-# menús y ajustes persistentes. Se compila igual para Android y para los tests del host.
+# menús, sticks táctiles de exploración y ajustes persistentes. Se compila igual para Android y para los tests del host.
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Strict.cmake)
 
 add_library(turok2_ui_core STATIC
     layout.cpp
     settings.cpp
     menu_controller.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../input/menu_nav.cpp)
+    ${CMAKE_CURRENT_LIST_DIR}/../input/menu_nav.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../input/touch_sticks.cpp)
 target_include_directories(turok2_ui_core PUBLIC ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/../input)
 # menu_controller.hpp expone loc::Table
 target_link_libraries(turok2_ui_core PUBLIC turok2_loc)

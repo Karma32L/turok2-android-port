@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "menu_nav.hpp"
+#include "touch_sticks.hpp"
 
 namespace input {
 
@@ -24,5 +25,16 @@ public:
 private:
     StickRepeater vertical_, horizontal_;
 };
+
+// Ejes del mando para la cámara libre, ya con zona muerta radial y en [-1, 1].
+// Con varios mandos se suman (y se acotan): cualquiera de ellos puede controlar.
+struct PadFly {
+    Vec2 move;  // stick izquierdo: x derecha, y adelante
+    Vec2 look;  // stick derecho: x derecha, y abajo (convención SDL)
+    float up = 0.0f;  // gatillo derecho / RB suben, gatillo izquierdo / LB bajan
+    bool fast = false;  // stick izquierdo pulsado (L3)
+};
+
+PadFly readPadFly(const std::vector<SDL_GameController*>& controllers);
 
 }  // namespace input

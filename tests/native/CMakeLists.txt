@@ -40,7 +40,8 @@ add_executable(audio_tests test_main.cpp test_wav.cpp test_ogg.cpp test_mixer.cp
 target_link_libraries(audio_tests PRIVATE turok2_audio_core)
 turok2_strict(audio_tests)
 
-add_executable(ui_tests test_main.cpp test_menu_nav.cpp test_settings.cpp test_menu_controller.cpp)
+add_executable(ui_tests test_main.cpp test_menu_nav.cpp test_settings.cpp test_menu_controller.cpp
+    test_touch_sticks.cpp)
 target_link_libraries(ui_tests PRIVATE turok2_ui_core)
 turok2_strict(ui_tests)
 
