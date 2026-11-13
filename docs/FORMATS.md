@@ -35,12 +35,12 @@ Tiene 22 646 entradas: 22 562 archivos y 84 entradas de directorio.
 |---|---:|---|---|---|
 | `.png` | 7696 | `89 50 4E 47 0D 0A 1A 0A` + `IHDR` | Imagen estándar | **Soportado** (`src/render/png.*`) |
 | `.kfont` | 4 | texto (`filter`, `texture`, …) | Fuente bitmap | **Soportado** (`src/render/kfont.*`) |
-| `.staticmesh` | 5344 | `02 00 00 00` (u32 LE, versión) | Binario | Pendiente |
+| `.staticmesh` | 5344 | `02 00 00 00` (u32 LE, versión) | Binario | **Soportado** (`src/render3d/static_mesh.*`) |
 | `.skinnedmesh` | 641 | `03 00 00 00` + floats (¿bbox?) | Binario | Pendiente |
 | `.anim` | 479 | `02 00 00 00` + u32 + … | Binario | Pendiente |
-| `.map` | 177 | `09 00 00 00` + tabla de offsets u32 (`0x30`, `0x38`, …) | Binario | Pendiente |
+| `.map` | 177 | `09 00 00 00` + tabla de offsets u32 (`0x30`, `0x38`, …) | Binario | **Parcial**: geometría estática e inicio (`src/render3d/map_file.*`) |
 | `.wav` | 2075 | `RIFF....WAVEfmt ` | Audio estándar | **Soportado** (`src/audio/wav.*`) |
-| `.kmat` | 3926 | texto (`material …`, `//`) | Material | Pendiente |
+| `.kmat` | 3926 | texto (`material …`, `//`) | Material | **Soportado** (`src/render3d/kmat.*`) |
 | `.ksnd`, `.particle`, `.kafx`, `.klf` | ~1650 | texto con bloques `nombre[i] = { … }` | Definiciones | Pendiente |
 | `.txt` (`defs/`, `cinemas/`, `scripts/`, …) | 449 | texto `clave = valor` | Configuración | `localization/` soportado |
 | `.cfg` | 5 | texto (`bind`, `seta`) | Consola/config | Pendiente |
@@ -147,10 +147,149 @@ Avance horizontal usado por el port: `(ancho + padwidth) × scale`.
 Aunque solo `numbers` declara `nosdf`, `bigfont` tampoco se comporta como un SDF en la
 práctica (≈ 4 % de píxeles con alfa intermedio): basta con alpha blending y filtrado lineal.
 
+## Niveles: mapa inicial de la campaña
+
+`defs/gameInfo.txt` define `newGameCinematic "cinemas/Gstart-far shot.txt"`, una cinemática
+que transcurre en `levels/(6)_cin_adon.map`. El primer nivel jugable es `kLevel_PortOfAdia_1`
+de `defs/mapInfo.txt` → **`levels/Port_of_Adia_1.map`** (`maxZDrawDistance 4000`). El nivel
+del Puerto de Adia está partido en 9 mapas (`Port_of_Adia_1..9`); el port carga solo el primero.
+
+En el juego no hay archivos `.ksh`: los materiales son solo `.kmat`, y los `progs/*.shader`
+son un macro-lenguaje propio sobre HLSL/GLSL. El port usa shaders GLSL ES 3.00 propios.
+
+Convenciones del mundo (verificadas con los datos):
+- **Z hacia arriba**, unidades del mapa; ángulos en **radianes**.
+- Triángulos **CCW** = cara frontal (3 022 de 3 041 triángulos de Port_of_Adia_1 coinciden
+  con su normal guardada).
+- Altura de ojos del jugador: `viewHeight 100.0` (`defs/postureInfo.txt`, `Player_Standing`).
+
+## `.map`
+
+### Árbol de nodos
+
+Todo el archivo es un árbol de nodos sin etiquetas de tipo; el esquema decide cómo leer
+cada nivel. Un nodo es un rango de bytes que se interpreta como:
+
+| Tipo | Disposición (u32 LE) |
+|---|---|
+| Contenedor | `n`, `off[n+1]`; hijo *i* = `[off[i], off[i+1])` relativo al inicio del nodo. `off[0]` = `4·(n+2)` redondeado a 8, `off[n]` = tamaño del nodo |
+| Hoja | `stride`, `count`, `stride·count` bytes de datos, relleno a múltiplo de 8 |
+
+Las cadenas son hojas con `count = 1` y `stride` = longitud + NUL. El `09 00 00 00` inicial
+no es una versión aparte: es el `n` del contenedor raíz (los 177 mapas tienen 9 secciones).
+
+### Secciones de la raíz
+
+| Sección | Contenido | Uso |
+|---|---|---|
+| 0 | hoja vacía | — |
+| 1 | `[0]` 16 cadenas: material del cielo (`skies/skyMaterials/…`) y `_default`; `[1]` 16 registros de 44 B (capas de cielo, sin identificar) | Se lee el material del cielo |
+| 2 | colisión (hipótesis): 556 × 16 B puntos, 122 × 96 B sectores, 824 × 18 B triángulos/enlaces en Port_of_Adia_1 | No |
+| 3 | `[0]` 2 × u16; `[1]`, `[2]` una entrada de 8 B (2 × f32) por área (¿límites 2D?) | No |
+| **4** | **áreas**: cada una es una hoja vacía o un contenedor `{[0] hoja de instancias, [1] contenedor de rutas .staticmesh}` con tantas rutas como instancias | **Sí** |
+| 5 | actores: contenedor `{[0] cabecera 48 B, [1] componentes}` | Se busca el inicio del jugador |
+| 6–8 | vacías en los mapas inspeccionados | — |
+
+### Instancia de malla estática
+
+88 B en la campaña, **84 B** en `levels/n64/` (multijugador); los primeros 64 B son iguales:
+
+| Offset | Tipo | Campo |
+|---:|---|---|
+| 0 | `f32[3]` | posición |
+| 12 | `f32[3]` | escala por eje (negativa = espejo, 19 de 53 760 instancias) |
+| 24 | `f32[3]` | rotación `(r0, r1, r2)` en radianes |
+| 36 | `f32[3]` | bbox mínima en mundo |
+| 48 | `f32[3]` | bbox máxima en mundo |
+| 60 | `u32` | flags |
+| 64 | 20–24 B | sin identificar (aparecen `61.44`, `4096.0`) |
+
+Transformación: `p_mundo = posición + R · (escala ⊙ p_local)` con
+**`R = Rz(−r0) · Ry(−r2) · Rx(−r1)`**. Se determinó comparando la bbox guardada con la de
+la malla transformada: con esta fórmula encajan todas las instancias con yaw distinguible
+(13 859 a favor, 0 en contra con el signo opuesto) y el 85 % de las que tienen pitch/roll;
+los casos que no encajan con ninguna variante son bbox desfasadas (sobre todo en mapas de
+cinemática), así que la fórmula de pitch/roll queda como la mejor hipótesis disponible. Con escala espejo se invierte el orden
+de los índices para conservar el CCW.
+
+### Inicio del jugador
+
+Cabecera de actor (48 B): `u32 tipo`, `f32[3]` posición, `f32[3]` escala, `f32[3]` rotación
+(`[0]` = yaw), resto sin identificar. Tipo **100** = `kActor_SPStart` (`defs/common.txt`).
+Los componentes (`kexLightComponent`, `kexSunLightComponent`, `kexWorldComponent`, …) son
+listas de pares clave/valor en texto; todavía no se interpretan.
+
+### Validación
+
+`render3d::parseMap` rechaza raíces que no tengan 9 secciones y cualquier offset o tamaño que
+se salga del nodo. Una instancia con valores no finitos, escala ~0, coordenadas absurdas o
+ruta insegura (`..`, absoluta, sin `.staticmesh`) se omite y se cuenta. Con los datos reales:
+177/177 mapas válidos, 53 760 instancias; Port_of_Adia_1 tiene 221 instancias de 64 mallas,
+6 053 triángulos, 177 materiales y 45 texturas, todas presentes.
+
+## `.staticmesh` (versión 2)
+
+Secuencial, little-endian:
+
+```
+u32 version (= 2)
+u32 reservado[4]            siempre 0
+u32 a, u32 b                opacos: (3, 24) en 3 087 archivos, ("\x01CNR", tamaño) en 2 215
+u32 numSurfaces
+numSurfaces × {
+    char material[]         terminado en NUL, sin prefijo de longitud
+    u32  numTris
+    u16  idx[numTris·3]     índices al bloque de vértices COMPARTIDO
+}
+u32 numVerts
+numVerts × { f32 pos[3]; f32 uv[2]; f32 normal[3] }      32 B por vértice
+```
+
+Una malla vacía termina justo después de `numSurfaces = 0` (32 B, sin `numVerts`). No hay
+colores por vértice ni lightmaps en ningún archivo del juego. Con los datos reales:
+5 291 / 5 344 válidas (47 vacías); las rechazadas son mallas de `models/mp/` truncadas o con
+bytes de sobra. `render3d::parseStaticMesh` exige índices `< numVerts ≤ 65 535`, floats
+finitos, nombres ASCII ≤ 256 B con NUL, y comprueba cada tamaño en 64 bits contra lo que
+queda del archivo **antes** de reservar memoria; los bytes sobrantes invalidan la malla.
+
+## `.kmat`
+
+Texto con bloques `material <nombre> { … }`. La superficie de una malla se resuelve así:
+
+```
+materials/harbor/mat_harbor2185/surf_2185_00_00
+└─────────── archivo ──────────┘└── material ──┘
+→ materials/harbor/mat_harbor2185.kmat, bloque "surf_2185_00_00"
+```
+
+| Directiva | Valores observados | Uso en el port |
+|---|---|---|
+| `sampler "diffuse" 0 "<png>" { filter …; wrap … }` | 12 856 (solo `"diffuse"`) | Textura; `wrap repeat\|mirrored\|clamp`, `filter linear\|linear_anisotropic\|nearest` |
+| `cull` | `back` (12 031), `none` (1) | Culling por material |
+| `sort` | `default`, `masked`, `translucent`, `water` | Orden de dibujo |
+| `blend`, `nodepthmask` | 548, 540 | Pasada translúcida sin escritura de profundidad |
+| `alphatest` + `alphafunc gequal` + `alphamask <umbral>` | 480 | `discard` si alfa < umbral (0,5 por defecto) |
+| `fullbright` | 876 | Sin iluminación |
+| `color_diffuse "r g b a"` | 12 855 | Multiplica la textura |
+| `nodraw` | 1 | No se dibuja |
+| `param`, `surface_type`, `depthtest`, `color_environment`, `reflectivePower` | — | Se reconocen y se ignoran |
+
+Los 3 926 archivos se parsean sin errores ni directivas desconocidas (12 856 materiales).
+Las rutas de textura pasan por `vfs::normalizePath` (se rechazan `..` y rutas absolutas).
+
+## Reproducir la validación
+
+```bash
+cmake -S tests/native -B build-host && cmake --build build-host -j
+TURK2_KPF="/ruta/absoluta/game.kpf" ./build-host/render3d_tests
+```
+
+Lee el `.kpf` en memoria (nada se extrae) y solo imprime recuentos.
+
 ## Pendiente de análisis
 
-Los formatos binarios (`.staticmesh`, `.skinnedmesh`, `.anim`, `.map`) solo tienen
-identificada la cabecera. Cada parser nuevo seguirá el mismo patrón que el decodificador PNG:
-- núcleo independiente de GL en `src/render/` (o en su propio módulo);
+`.skinnedmesh`, `.anim`, la colisión y los componentes de actores de `.map`, y las capas de
+cielo solo tienen identificada su estructura general. Cada parser nuevo sigue el mismo patrón:
+- núcleo independiente de GL en su propio módulo;
 - límites comprobados en cada offset y tamaño;
 - tests host con datos sintéticos en `tests/native/`.
