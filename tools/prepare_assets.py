@@ -250,6 +250,91 @@ def inspect_kpf(path: Path, with_hash: bool = True) -> KpfReport:
     return report
 
 
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+MAGIC_LEN = 16  # bytes de cabecera mostrados por extensión
+_PNG_HEAD = 33  # firma (8) + chunk IHDR completo (8 + 13 + 4)
+
+
+@dataclass
+class ExtStats:
+    count: int = 0
+    size: int = 0
+    magic: bytes = b""  # primeros MAGIC_LEN bytes de la primera entrada no vacía
+    sample: str = ""
+
+
+@dataclass
+class FormatReport:
+    entries: int = 0
+    by_top: dict[str, int] = field(default_factory=dict)
+    by_ext: dict[str, ExtStats] = field(default_factory=dict)
+    # (bit depth, color type, interlace) -> nº de PNG; ("invalid",) para cabeceras rotas
+    png: dict[tuple, int] = field(default_factory=dict)
+
+
+def parse_png_header(head: bytes) -> tuple[int, int, int, int, int] | None:
+    """(ancho, alto, bit depth, color type, interlace) o None si la cabecera no es válida."""
+    if len(head) < _PNG_HEAD or not head.startswith(PNG_SIG):
+        return None
+    if head[8:16] != b"\x00\x00\x00\x0dIHDR":  # IHDR debe ser el primer chunk y medir 13
+        return None
+    w, h = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    return w, h, head[24], head[25], head[28]
+
+
+def survey_formats(path: Path) -> FormatReport:
+    """Inventario de solo lectura: lee como mucho _PNG_HEAD bytes por entrada, nada a disco."""
+    if not zipfile.is_zipfile(path):
+        raise AssetError(f"{path} no es un .kpf válido (no es un ZIP)")
+    rep = FormatReport()
+    with zipfile.ZipFile(path) as z:
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            rep.entries += 1
+            name = info.filename.lower()
+            top = name.split("/", 1)[0] if "/" in name else "(raíz)"
+            ext = PurePosixPath(name).suffix or "(sin ext)"
+            rep.by_top[top] = rep.by_top.get(top, 0) + 1
+            st = rep.by_ext.setdefault(ext, ExtStats())
+            st.count += 1
+            st.size += info.file_size
+            need_magic = not st.magic and info.file_size > 0
+            if not need_magic and ext != ".png":
+                continue
+            try:
+                with z.open(info) as fh:
+                    head = fh.read(_PNG_HEAD)
+            except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError) as exc:
+                raise AssetError(f"No se pudo leer {info.filename!r}: {exc}") from exc
+            if need_magic:
+                st.magic, st.sample = head[:MAGIC_LEN], info.filename
+            if ext == ".png":
+                hdr = parse_png_header(head)
+                key = hdr[2:] if hdr else ("invalid",)
+                rep.png[key] = rep.png.get(key, 0) + 1
+    return rep
+
+
+def _printable(b: bytes) -> str:
+    return "".join(chr(c) if 32 <= c < 127 else "." for c in b)
+
+
+def _print_formats(r: FormatReport) -> int:
+    print(f"Archivos: {r.entries} (sin contar entradas de directorio)")
+    print("\nPor carpeta principal:")
+    for k, v in sorted(r.by_top.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"  {v:7}  {k}")
+    print("\nPor extensión (nº, tamaño, magic de la primera entrada):")
+    for k, s in sorted(r.by_ext.items(), key=lambda kv: (-kv[1].count, kv[0])):
+        print(f"  {s.count:7}  {k:14} {_human(s.size):>10}  {s.magic.hex(' '):47}  {_printable(s.magic)}")
+    if r.png:
+        print("\nPNG (bit depth, color type, interlace):")
+        for k, v in sorted(r.png.items(), key=lambda kv: -kv[1]):
+            print(f"  {v:7}  {k}")
+    return EXIT_OK
+
+
 def ensure_kpf_ok(report: KpfReport) -> None:
     if report.bad_member:
         raise AssetError(f"{report.path.name}: entrada corrupta {report.bad_member!r}")
@@ -478,6 +563,7 @@ def build_parser() -> argparse.ArgumentParser:
     with_steam(sub.add_parser("detect", help="Localiza la instalación"))
     sp = with_steam(sub.add_parser("inspect", help="Verifica integridad e idiomas del .kpf"))
     sp.add_argument("--lang", default="spanish")
+    with_steam(sub.add_parser("formats", help="Inventario de formatos del .kpf (solo lectura)"))
     sp = with_steam(sub.add_parser("install", help="Copia los assets al proyecto o al dispositivo"))
     sp.add_argument("--mode", choices=("local", "adb"), required=True)
     sp.add_argument("--adb", help="Ruta a adb")
@@ -499,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_OK
         if args.cmd == "inspect":
             return _print_report(inspect_kpf(kpf), args.lang)
+        if args.cmd == "formats":
+            return _print_formats(survey_formats(kpf))
         if args.cmd == "extract":
             written = extract_members(kpf, args.pattern, args.out)
             print(f"Extraídos {len(written)} archivos en {args.out}")

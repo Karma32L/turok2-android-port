@@ -1,20 +1,19 @@
-// Prueba de integración SDL2: ventana GL ES 3.0 a pantalla completa que limpia a verde
-// y registra la información del driver GL en logcat (tag "turok2").
+// Arranque: ventana GL ES 3.0 a pantalla completa, montaje del VFS, localización y
+// pantalla de título con gráficos reales de game.kpf. Si algo falla, se muestra el color de
+// diagnóstico (verde = VFS y localización OK pero sin gráficos, rojo = fallo de datos).
 #include <SDL.h>
 #include <SDL_main.h>
 #include <GLES3/gl3.h>
-#include <android/log.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "loc/localization.hpp"
+#include "log.hpp"
+#include "title_screen.hpp"
 #include "vfs/vfs.hpp"
 #include "vfs/vfs_sdl.hpp"
-
-#define LOG_TAG "turok2"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
@@ -37,8 +36,8 @@ std::string oneLine(const std::string& s) {
     return out;
 }
 
-// Monta el VFS, carga loc_spanish.txt y lo resume en logcat. Devuelve true si todo fue bien.
-bool runVfsDiagnostics(vfs::Vfs& fs) {
+// Monta el VFS, carga loc_spanish.txt en `table` y lo resume en logcat. true si todo fue bien.
+bool runVfsDiagnostics(vfs::Vfs& fs, loc::Table& table) {
     const char* ext = SDL_AndroidGetExternalStoragePath();
     const std::string extDir = ext ? ext : "";
     if (!ext) LOGE("VFS: sin almacenamiento externo: %s", SDL_GetError());
@@ -68,7 +67,8 @@ bool runVfsDiagnostics(vfs::Vfs& fs) {
         return false;
     }
     const std::string* from = fs.origin(kLocPath);
-    const loc::Table t = loc::parse(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+    table = loc::parse(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+    const loc::Table& t = table;
     LOGI("LOC: %s (%s): %zu indexadas, %zu con clave, %zu mal formadas, %zu duplicadas",
          kLocPath, from ? from->c_str() : "?", t.indexed().size(), t.keyed().size(), t.malformed(),
          t.duplicates());
@@ -101,8 +101,7 @@ void logVersions() {
     LOGI("GLSL:        %s", glStr(GL_SHADING_LANGUAGE_VERSION));
 }
 
-void updateViewport(SDL_Window* window) {
-    int w = 0, h = 0;
+void updateViewport(SDL_Window* window, int& w, int& h) {
     SDL_GL_GetDrawableSize(window, &w, &h);
     glViewport(0, 0, w, h);
     LOGI("Viewport %dx%d", w, h);
@@ -148,13 +147,20 @@ int main(int /*argc*/, char* /*argv*/[]) {
     }
 
     logVersions();
-    updateViewport(window);
+    int viewW = 0, viewH = 0;
+    updateViewport(window, viewW, viewH);
 
     vfs::Vfs fs;
-    const bool vfsOk = runVfsDiagnostics(fs);
+    loc::Table strings;
+    const bool vfsOk = runVfsDiagnostics(fs, strings);
     const float clearR = vfsOk ? kOkR : kErrR;
     const float clearG = vfsOk ? kOkG : kErrG;
     const float clearB = vfsOk ? kOkB : kErrB;
+
+    // Los recursos GL deben destruirse antes que el contexto: vida acotada con optional
+    std::optional<TitleScreen> title(std::in_place);
+    bool titleOk = vfsOk && title->load(fs, &strings);
+    if (vfsOk && !titleOk) LOGE("TITLE: sin pantalla de título; se mantiene el color de diagnóstico");
 
     std::vector<SDL_GameController*> controllers;
     bool running = true;
@@ -177,8 +183,15 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 break;
             case SDL_WINDOWEVENT:
                 if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                    updateViewport(window);
+                    updateViewport(window, viewW, viewH);
                 }
+                break;
+            case SDL_RENDER_DEVICE_RESET:
+                // SDL creó un contexto EGL nuevo al reanudar: los IDs GL antiguos ya no valen
+                LOGI("Contexto GL perdido: recargando recursos");
+                title->abandonGl();
+                updateViewport(window, viewW, viewH);
+                titleOk = vfsOk && title->load(fs, &strings);
                 break;
             case SDL_CONTROLLERDEVICEADDED:
                 if (SDL_GameController* gc = SDL_GameControllerOpen(ev.cdevice.which)) {
@@ -217,15 +230,19 @@ int main(int /*argc*/, char* /*argv*/[]) {
             continue;
         }
 
-        glClearColor(clearR, clearG, clearB, 1.0f);
+        if (titleOk) glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // bandas negras fuera del área 4:3
+        else glClearColor(clearR, clearG, clearB, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (titleOk) title->draw(viewW, viewH);
         SDL_GL_SwapWindow(window);
     }
 
     for (SDL_GameController* gc : controllers) {
         SDL_GameControllerClose(gc);
     }
-    SDL_GL_DeleteContext(context);
+    title.reset();  // glDelete* con el contexto aún vivo
+    // Tras SDL_RENDER_DEVICE_RESET el contexto actual ya no es `context`
+    SDL_GL_DeleteContext(SDL_GL_GetCurrentContext());
     SDL_DestroyWindow(window);
     SDL_Quit();
     LOGI("SDL_main finalizado");

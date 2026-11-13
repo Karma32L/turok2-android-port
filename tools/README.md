@@ -30,6 +30,10 @@ python3 tools/prepare_assets.py install --mode adb [--serial SERIAL] [--adb /rut
 # 3b. Build local personal de un clic: copia a android/app/src/main/assets/game_data/
 python3 tools/prepare_assets.py install --mode local [--dry-run]
 
+# Extra: inventario de formatos (carpetas, extensiones, magic, cabeceras PNG).
+#        Solo lectura: lee como mucho 33 bytes por entrada y no escribe nada a disco.
+python3 tools/prepare_assets.py formats
+
 # Extra: extraer partes del .kpf para inspeccionarlas (fuera del repo)
 python3 tools/prepare_assets.py extract --pattern 'localization/*' --out ~/turok2-inspect
 ```

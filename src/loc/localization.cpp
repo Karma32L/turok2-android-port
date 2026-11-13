@@ -14,38 +14,55 @@ const std::string* Table::at(std::size_t index) const {
     return index < indexed_.size() ? &indexed_[index] : nullptr;
 }
 
+bool nextCodepoint(std::string_view s, std::size_t& i, std::uint32_t& cp) {
+    if (i >= s.size()) return false;
+    const auto c = static_cast<unsigned char>(s[i]);
+    std::size_t len;
+    std::uint32_t v;
+    if (c < 0x80) {
+        cp = c;
+        ++i;
+        return true;
+    } else if ((c & 0xE0) == 0xC0) {
+        len = 2;
+        v = c & 0x1F;
+    } else if ((c & 0xF0) == 0xE0) {
+        len = 3;
+        v = c & 0x0F;
+    } else if ((c & 0xF8) == 0xF0) {
+        len = 4;
+        v = c & 0x07;
+    } else {
+        ++i;  // byte de continuación suelto o 0xF8..0xFF
+        return false;
+    }
+    if (s.size() - i < len) {  // secuencia truncada
+        ++i;
+        return false;
+    }
+    for (std::size_t k = 1; k < len; ++k) {
+        const auto cc = static_cast<unsigned char>(s[i + k]);
+        if ((cc & 0xC0) != 0x80) {
+            ++i;
+            return false;
+        }
+        v = (v << 6) | (cc & 0x3F);
+    }
+    static constexpr std::uint32_t kMin[] = {0, 0, 0x80, 0x800, 0x10000};
+    if (v < kMin[len] || (v >= 0xD800 && v <= 0xDFFF) || v > 0x10FFFF) {  // overlong, surrogate, rango
+        ++i;
+        return false;
+    }
+    cp = v;
+    i += len;
+    return true;
+}
+
 bool isValidUtf8(std::string_view s) {
     std::size_t i = 0;
+    std::uint32_t cp = 0;
     while (i < s.size()) {
-        const auto c = static_cast<unsigned char>(s[i]);
-        std::size_t len;
-        std::uint32_t cp;
-        if (c < 0x80) {
-            ++i;
-            continue;
-        } else if ((c & 0xE0) == 0xC0) {
-            len = 2;
-            cp = c & 0x1F;
-        } else if ((c & 0xF0) == 0xE0) {
-            len = 3;
-            cp = c & 0x0F;
-        } else if ((c & 0xF8) == 0xF0) {
-            len = 4;
-            cp = c & 0x07;
-        } else {
-            return false;  // byte de continuación suelto o 0xF8..0xFF
-        }
-        if (s.size() - i < len) return false;  // secuencia truncada
-        for (std::size_t k = 1; k < len; ++k) {
-            const auto cc = static_cast<unsigned char>(s[i + k]);
-            if ((cc & 0xC0) != 0x80) return false;
-            cp = (cp << 6) | (cc & 0x3F);
-        }
-        static constexpr std::uint32_t kMin[] = {0, 0, 0x80, 0x800, 0x10000};
-        if (cp < kMin[len]) return false;                  // overlong
-        if (cp >= 0xD800 && cp <= 0xDFFF) return false;    // surrogate
-        if (cp > 0x10FFFF) return false;
-        i += len;
+        if (!nextCodepoint(s, i, cp)) return false;
     }
     return true;
 }

@@ -19,7 +19,7 @@ Entorno de desarrollo: Ubuntu Linux. SDK en `~/Android/Sdk` (ruta definida en `l
 - Logs nativos: `adb logcat -s turok2:*`
 - Pruebas (stdlib, datos sintéticos): `python3 -m unittest discover -s tests -v`
 - Tests nativos host (ASan/UBSan, .kpf sintéticos): `cmake -S tests/native -B build-host && cmake --build build-host -j && ctest --test-dir build-host --output-on-failure`
-- Preparar assets: `python3 tools/prepare_assets.py {detect|inspect|install --mode adb|local|extract}`
+- Preparar assets: `python3 tools/prepare_assets.py {detect|inspect|formats|install --mode adb|local|extract}`
 
 # Regla de Assets (ESTRICTA — sin excepciones)
 **CERO assets con copyright en Git.** Prohibido versionar archivos de datos del juego original:
