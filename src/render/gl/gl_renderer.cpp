@@ -58,14 +58,37 @@ GLuint compile(GLenum type, const char* src, std::string* err) {
     return sh;
 }
 
-// Descarta errores GL previos para no atribuirlos a la operación siguiente. Acotado: con el
-// contexto perdido algunos drivers devuelven error en cada llamada.
+}  // namespace
+
+// Acotado: con el contexto perdido algunos drivers devuelven error en cada llamada
 void clearGlErrors() {
     for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {
     }
 }
 
-}  // namespace
+GLuint linkProgram(const char* vertexSrc, const char* fragmentSrc, std::string* err) {
+    const GLuint vs = compile(GL_VERTEX_SHADER, vertexSrc, err);
+    if (!vs) return 0;
+    const GLuint fs = compile(GL_FRAGMENT_SHADER, fragmentSrc, err);
+    if (!fs) {
+        glDeleteShader(vs);
+        return 0;
+    }
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    glDeleteShader(vs);  // quedan referenciados por el programa
+    glDeleteShader(fs);
+    GLint ok = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        if (err) *err = "enlace de programa: " + infoLog(program, true);
+        glDeleteProgram(program);
+        return 0;
+    }
+    return program;
+}
 
 // ------------------------------------------------------------------------- Texture
 
@@ -149,26 +172,8 @@ void SpriteBatch::abandon() {
 bool SpriteBatch::init(std::string* err) {
     release();
     clearGlErrors();
-    const GLuint vs = compile(GL_VERTEX_SHADER, kVertexSrc, err);
-    if (!vs) return false;
-    const GLuint fs = compile(GL_FRAGMENT_SHADER, kFragmentSrc, err);
-    if (!fs) {
-        glDeleteShader(vs);
-        return false;
-    }
-    program_ = glCreateProgram();
-    glAttachShader(program_, vs);
-    glAttachShader(program_, fs);
-    glLinkProgram(program_);
-    glDeleteShader(vs);  // quedan referenciados por el programa
-    glDeleteShader(fs);
-    GLint ok = GL_FALSE;
-    glGetProgramiv(program_, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        if (err) *err = "enlace de programa: " + infoLog(program_, true);
-        release();
-        return false;
-    }
+    program_ = linkProgram(kVertexSrc, kFragmentSrc, err);
+    if (!program_) return false;
     uScale_ = glGetUniformLocation(program_, "uScale");
     uTex_ = glGetUniformLocation(program_, "uTex");
 

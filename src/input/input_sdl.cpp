@@ -1,5 +1,6 @@
 #include "input_sdl.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace input {
@@ -55,6 +56,44 @@ void StickPoller::poll(const std::vector<SDL_GameController*>& controllers, std:
     // Eje Y de SDL: positivo hacia abajo
     if (const int v = vertical_.update(y, nowMs)) out.push_back(v > 0 ? MenuAction::Down : MenuAction::Up);
     if (const int h = horizontal_.update(x, nowMs)) out.push_back(h > 0 ? MenuAction::Right : MenuAction::Left);
+}
+
+namespace {
+
+constexpr float kStickDeadZone = 0.2f;    // los sticks baratos no vuelven al centro exacto
+constexpr float kTriggerDeadZone = 0.1f;
+
+float axis(SDL_GameController* gc, SDL_GameControllerAxis a) {
+    return static_cast<float>(SDL_GameControllerGetAxis(gc, a)) / 32767.0f;
+}
+
+float clampUnit(float v) { return std::clamp(v, -1.0f, 1.0f); }
+
+}  // namespace
+
+PadFly readPadFly(const std::vector<SDL_GameController*>& controllers) {
+    PadFly out;
+    for (SDL_GameController* gc : controllers) {
+        const Vec2 l = radialDeadZone({axis(gc, SDL_CONTROLLER_AXIS_LEFTX), axis(gc, SDL_CONTROLLER_AXIS_LEFTY)},
+                                      kStickDeadZone);
+        const Vec2 r = radialDeadZone({axis(gc, SDL_CONTROLLER_AXIS_RIGHTX), axis(gc, SDL_CONTROLLER_AXIS_RIGHTY)},
+                                      kStickDeadZone);
+        out.move.x += l.x;
+        out.move.y -= l.y;  // SDL: y positivo hacia abajo; adelante = stick arriba
+        out.look.x += r.x;
+        out.look.y += r.y;
+        float rt = axis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT), lt = axis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        rt = rt > kTriggerDeadZone ? rt : 0.0f;
+        lt = lt > kTriggerDeadZone ? lt : 0.0f;
+        out.up += rt - lt;
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) out.up += 1.0f;
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) out.up -= 1.0f;
+        if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_LEFTSTICK)) out.fast = true;
+    }
+    out.move = {clampUnit(out.move.x), clampUnit(out.move.y)};
+    out.look = {clampUnit(out.look.x), clampUnit(out.look.y)};
+    out.up = clampUnit(out.up);
+    return out;
 }
 
 }  // namespace input

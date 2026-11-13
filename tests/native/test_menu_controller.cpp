@@ -42,16 +42,16 @@ TEST(controlador_menu_principal) {
 TEST(controlador_nuevo_juego_y_vuelta) {
     MenuController c;
     CHECK(onlySfx(c.onAction(MenuAction::Accept), Sfx::Select));
-    CHECK(c.state() == GameState::InGameStub);
+    CHECK(c.state() == GameState::InGame);
     CHECK(c.rows().empty());
     CHECK(c.onAction(MenuAction::Down).sfx.empty());
-    CHECK(c.state() == GameState::InGameStub);
-    c.onAction(MenuAction::Back);
+    CHECK(c.state() == GameState::InGame);
+    // Los toques pertenecen a la escena 3D: el menú los ignora
+    CHECK(c.onTouchDown(0).sfx.empty() && c.onTouchUp(-1, 0.5f).sfx.empty());
+    CHECK(c.state() == GameState::InGame);
+    // Atrás (botón, gesto, B del mando o botón de salida táctil) vuelve al título
+    CHECK(onlySfx(c.onAction(MenuAction::Back), Sfx::Select));
     CHECK(c.state() == GameState::Title && c.selected() == MenuController::NewGame);
-    // Por toque: tocar cualquier sitio en el stub vuelve
-    c.onAction(MenuAction::Accept);
-    c.onTouchUp(-1, 0.5f);
-    CHECK(c.state() == GameState::Title);
 }
 
 TEST(controlador_salir) {

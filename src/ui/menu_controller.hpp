@@ -48,7 +48,7 @@ public:
     MenuOutput onTouchDown(int row);
     MenuOutput onTouchUp(int row, float relX);
 
-    // Vista de la página actual (vacía en InGameStub/Quit)
+    // Vista de la página actual (vacía en InGame/Quit)
     std::vector<MenuRowView> rows() const;
     std::string heading() const;  // título de página ("" en el menú principal)
     int selected() const { return nav_.selected(); }

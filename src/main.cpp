@@ -1,5 +1,6 @@
-// Arranque: ventana GL ES 3.0 a pantalla completa, montaje del VFS, localización, audio y
-// menú de título interactivo (táctil, mando y teclado) con gráficos y sonidos de game.kpf.
+// Arranque: ventana GL ES 3.0 a pantalla completa, montaje del VFS, localización, audio,
+// menú de título interactivo (táctil, mando y teclado) y, con NUEVO JUEGO, exploración en
+// cámara libre del primer nivel 3D, todo con gráficos y sonidos de game.kpf.
 // Si algo falla, se muestra el color de diagnóstico (verde = VFS y localización OK pero sin
 // gráficos, rojo = fallo de datos).
 #include <SDL.h>
@@ -22,6 +23,7 @@
 #include "ui/settings.hpp"
 #include "vfs/vfs.hpp"
 #include "vfs/vfs_sdl.hpp"
+#include "world_scene.hpp"
 
 namespace {
 
@@ -199,6 +201,8 @@ int main(int /*argc*/, char* /*argv*/[]) {
     // Atrás (botón o gesto) llega como SDL_SCANCODE_AC_BACK en vez de cerrar la actividad:
     // el menú lo usa para volver de Opciones / del stub
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+    // Los toques llegan como SDL_FINGER*: sin ratón sintético que duplique la entrada
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         LOGE("SDL_Init falló: %s", SDL_GetError());
@@ -286,6 +290,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     std::optional<TitleScreen> title(std::in_place);
     bool titleOk = vfsOk && title->load(fs);
     if (vfsOk && !titleOk) LOGE("TITLE: sin pantalla de título; se mantiene el color de diagnóstico");
+    std::optional<WorldScene> world(std::in_place);  // nivel 3D: se carga al entrar en InGame
 
     // Ejecuta los efectos que pide el menú: SFX, volúmenes, idioma y guardado
     auto applyOutput = [&](const ui::MenuOutput& out) {
@@ -311,6 +316,10 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool paused = false;
     GameState lastState = menu.state();
 
+    Uint64 lastCounter = SDL_GetPerformanceCounter();
+    const double counterFreq = static_cast<double>(SDL_GetPerformanceFrequency());
+    auto inWorld = [&] { return menu.state() == GameState::InGame; };
+
     // Fila bajo un toque (coordenadas normalizadas de SDL -> píxeles del drawable)
     auto touchRow = [&](float nx, float ny, float* relX) {
         const float px = nx * static_cast<float>(viewW), py = ny * static_cast<float>(viewH);
@@ -333,6 +342,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 paused = true;  // no renderizar sin superficie
                 audioDev.pause();
                 fingerDown = false;
+                world->cancelTouches();
                 LOGI("App en segundo plano: audio en pausa");
                 break;
             case SDL_APP_DIDENTERFOREGROUND:
@@ -349,8 +359,10 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 // SDL creó un contexto EGL nuevo al reanudar: los IDs GL antiguos ya no valen
                 LOGI("Contexto GL perdido: recargando recursos");
                 title->abandonGl();
+                world->abandonGl();
                 updateViewport(window, viewW, viewH);
                 titleOk = vfsOk && title->load(fs);
+                if (inWorld() && !world->reloadGl(fs)) LOGE("WORLD: no se pudo recargar tras perder el contexto");
                 break;
             case SDL_CONTROLLERDEVICEADDED:
                 if (SDL_GameController* gc = SDL_GameControllerOpen(ev.cdevice.which)) {
@@ -372,14 +384,23 @@ int main(int /*argc*/, char* /*argv*/[]) {
                 }
                 break;
             case SDL_FINGERDOWN:
-                if (!fingerDown) {
+                if (inWorld()) {
+                    world->fingerDown(ev.tfinger.fingerId, ev.tfinger.x, ev.tfinger.y);
+                } else if (!fingerDown) {
                     fingerDown = true;
                     activeFinger = ev.tfinger.fingerId;
                     applyOutput(menu.onTouchDown(touchRow(ev.tfinger.x, ev.tfinger.y, nullptr)));
                 }
                 break;
+            case SDL_FINGERMOTION:
+                if (inWorld()) world->fingerMotion(ev.tfinger.fingerId, ev.tfinger.x, ev.tfinger.y);
+                break;
             case SDL_FINGERUP:
-                if (fingerDown && ev.tfinger.fingerId == activeFinger) {
+                if (inWorld()) {
+                    // Botón de salida táctil; si el nivel no cargó, cualquier toque vuelve
+                    const bool exit = world->fingerUp(ev.tfinger.fingerId, ev.tfinger.x, ev.tfinger.y);
+                    if (exit || !world->loaded()) applyOutput(menu.onAction(input::MenuAction::Back));
+                } else if (fingerDown && ev.tfinger.fingerId == activeFinger) {
                     fingerDown = false;
                     float relX = 0.5f;
                     const int row = touchRow(ev.tfinger.x, ev.tfinger.y, &relX);
@@ -397,8 +418,20 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
         if (menu.state() != lastState) {
             LOGI("Escena: %d -> %d", static_cast<int>(lastState), static_cast<int>(menu.state()));
+            if (lastState == GameState::InGame) world->unload();  // libera GPU y memoria del nivel
             lastState = menu.state();
             fingerDown = false;  // un toque que cambia de página no debe activar la siguiente
+            if (inWorld() && !paused) {
+                // Un frame con el mensaje de carga antes de bloquear leyendo el nivel
+                if (titleOk) {
+                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    title->drawMessage(viewW, viewH, menu.heading());
+                    SDL_GL_SwapWindow(window);
+                }
+                if (!vfsOk || !world->load(fs)) LOGE("WORLD: no se pudo cargar el nivel; toca para volver");
+                lastCounter = SDL_GetPerformanceCounter();  // la carga no cuenta como dt
+            }
         }
         if (menu.state() == GameState::Quit) {
             LOGI("SALIR seleccionado: cerrando");
@@ -406,8 +439,19 @@ int main(int /*argc*/, char* /*argv*/[]) {
             continue;
         }
 
+        const Uint64 nowCounter = SDL_GetPerformanceCounter();
+        const auto dt = static_cast<float>(static_cast<double>(nowCounter - lastCounter) / counterFreq);
+        lastCounter = nowCounter;
+
         if (paused) {
             SDL_Delay(16);  // evita bucle activo mientras está en background
+            continue;
+        }
+
+        if (inWorld() && world->loaded()) {
+            world->update(dt, controllers);
+            world->draw(viewW, viewH);
+            SDL_GL_SwapWindow(window);
             continue;
         }
 
@@ -415,8 +459,8 @@ int main(int /*argc*/, char* /*argv*/[]) {
         else glClearColor(clearR, clearG, clearB, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (titleOk) {
-            if (menu.state() == GameState::InGameStub) {
-                // TODO(siguiente rama): cargar el primer mapa 3D
+            if (inWorld()) {
+                // El nivel no cargó (ver logcat): mensaje y vuelta con un toque o Atrás
                 title->drawMessage(viewW, viewH, menu.heading());
             } else {
                 const float t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
@@ -430,7 +474,8 @@ int main(int /*argc*/, char* /*argv*/[]) {
     for (SDL_GameController* gc : controllers) {
         SDL_GameControllerClose(gc);
     }
-    title.reset();  // glDelete* con el contexto aún vivo
+    world.reset();  // glDelete* con el contexto aún vivo
+    title.reset();
     // Tras SDL_RENDER_DEVICE_RESET el contexto actual ya no es `context`
     SDL_GL_DeleteContext(SDL_GL_GetCurrentContext());
     SDL_DestroyWindow(window);

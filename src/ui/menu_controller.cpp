@@ -41,7 +41,7 @@ void MenuController::enterOptions() {
 }
 
 MenuOutput MenuController::onAction(MenuAction a) {
-    if (state_ == GameState::InGameStub) {
+    if (state_ == GameState::InGame) {
         if (a == MenuAction::Back) {
             enterTitle(NewGame);
             return {{Sfx::Select}, false, false};
@@ -58,10 +58,7 @@ MenuOutput MenuController::onTouchDown(int row) {
 }
 
 MenuOutput MenuController::onTouchUp(int row, float relX) {
-    if (state_ == GameState::InGameStub) {
-        // Sin botón Atrás accesible (p. ej. navegación por gestos), un toque vuelve al título
-        return onAction(MenuAction::Back);
-    }
+    // En InGame los toques son de la escena 3D (sticks y botón de salida, que envía Back)
     if (state_ != GameState::Title && state_ != GameState::Options) return {};
     return apply(nav_.touchUp(row, relX));
 }
@@ -92,7 +89,7 @@ MenuOutput MenuController::apply(const NavEvent& e) {
 
 MenuOutput MenuController::activateMain(int row) {
     switch (row) {
-    case NewGame: state_ = GameState::InGameStub; break;
+    case NewGame: state_ = GameState::InGame; break;
     case Options: enterOptions(); break;
     case Quit: state_ = GameState::Quit; break;
     default: return {};  // deshabilitadas: MenuNav ya no las activa
@@ -139,7 +136,7 @@ std::vector<MenuRowView> MenuController::rows() const {
 
 std::string MenuController::heading() const {
     if (state_ == GameState::Options) return str("options_title");
-    if (state_ == GameState::InGameStub) return str("mainmenu_newgame") + "...";
+    if (state_ == GameState::InGame) return str("mainmenu_newgame") + "...";  // mensaje de carga
     return {};
 }
 
