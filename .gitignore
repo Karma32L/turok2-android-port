@@ -1,6 +1,32 @@
-.env
-.venv/
-__pycache__/
-*.py[cod]
+# --- Assets con copyright (PROHIBIDOS en Git) ---
+*.kpf
+*.exe
+*.dll
+*.z64
+# Datos del juego aportados por el usuario: nunca se versionan (solo se conserva .gitkeep)
+android/app/src/main/assets/game_data/*
+!android/app/src/main/assets/game_data/.gitkeep
+
+# --- Artefactos de compilación Android/NDK ---
+*.apk
+*.aab
+build/
+.cxx/
+.externalNativeBuild/
+.gradle/
+local.properties
+*.so
+*.o
+
+# --- Firma (nunca versionar) ---
+*.jks
+*.keystore
+
+# --- IDE / sistema ---
+.idea/
+.vscode/
+*.iml
+.DS_Store
 *.log
+.env
 .claude/settings.local.json
