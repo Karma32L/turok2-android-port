@@ -1,25 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Sin permisos: el esqueleto no necesita ninguno -->
+<!-- Sin permisos: VIBRATE / BLUETOOTH_CONNECT se añadirán solo cuando se usen (SDL degrada sin ellos) -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
-    <!-- hasCode=false: no hay código Java/Kotlin, solo NativeActivity -->
     <application
         android:allowBackup="false"
-        android:hasCode="false"
-        android:label="Turok2 Port">
+        android:hasCode="true"
+        android:hardwareAccelerated="true"
+        android:label="Turok2 Port"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
+        <!-- SDLActivity (vía MainActivity) carga libSDL2.so y libturok2.so y llama a SDL_main -->
         <activity
-            android:name="android.app.NativeActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:name=".MainActivity"
+            android:alwaysRetainTaskState="true"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:exported="true"
+            android:launchMode="singleInstance"
+            android:preferMinimalPostProcessing="true"
             android:screenOrientation="sensorLandscape">
-
-            <!-- Debe coincidir con el target de src/CMakeLists.txt -->
-            <meta-data
-                android:name="android.app.lib_name"
-                android:value="turok2" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
