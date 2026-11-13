@@ -15,6 +15,12 @@
 
 namespace render::gl {
 
+// Compila y enlaza un programa GLSL ES. 0 (y el log en *err) si falla.
+GLuint linkProgram(const char* vertexSrc, const char* fragmentSrc, std::string* err);
+
+// Descarta errores GL previos para no atribuirlos a la operación siguiente
+void clearGlErrors();
+
 struct Color {
     std::uint8_t r = 255, g = 255, b = 255, a = 255;
 };

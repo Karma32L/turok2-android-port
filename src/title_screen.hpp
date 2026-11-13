@@ -25,7 +25,7 @@ public:
     void drawMenu(int viewportW, int viewportH, const std::string& heading, const std::vector<ui::MenuRowView>& rows,
                   int selected, float timeSec);
 
-    // Pantalla negra con un texto centrado (marcador de posición de InGameStub)
+    // Pantalla negra con un texto centrado (carga del nivel o fallo al cargarlo)
     void drawMessage(int viewportW, int viewportH, const std::string& text);
 
     // Hitboxes de las filas en píxeles del framebuffer (idénticas a las del dibujo)
