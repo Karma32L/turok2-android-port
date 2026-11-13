@@ -8,13 +8,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Opciones SDL_SHARED/SDL_STATIC/SDL_TEST se pasan desde android/app/build.gradle.kts.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/SDL2 ${CMAKE_BINARY_DIR}/SDL2)
 
+# Módulos independientes de plataforma (también se compilan en el host para tests)
+add_subdirectory(vfs)
+add_subdirectory(loc)
+
 # Debe ser SHARED: SDLActivity carga libturok2.so y busca SDL_main en ella
-add_library(turok2 SHARED main.cpp)
+add_library(turok2 SHARED main.cpp vfs/vfs_sdl.cpp)
 
-# Flags estrictos solo para nuestro código (no se imponen a SDL)
-target_compile_options(turok2 PRIVATE
-    -Wall -Wextra -Werror=format-security
-    -fstack-protector-strong
-    $<$<CONFIG:Release>:-D_FORTIFY_SOURCE=2>)
+# Flags estrictos solo para nuestro código (no se imponen a SDL ni a miniz)
+turok2_strict(turok2)
 
-target_link_libraries(turok2 PRIVATE SDL2::SDL2 GLESv3 log)
+target_link_libraries(turok2 PRIVATE turok2_vfs turok2_loc SDL2::SDL2 GLESv3 log)

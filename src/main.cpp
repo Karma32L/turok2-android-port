@@ -5,7 +5,12 @@
 #include <GLES3/gl3.h>
 #include <android/log.h>
 
+#include <string>
 #include <vector>
+
+#include "loc/localization.hpp"
+#include "vfs/vfs.hpp"
+#include "vfs/vfs_sdl.hpp"
 
 #define LOG_TAG "turok2"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -13,8 +18,68 @@
 
 namespace {
 
-// Verde oscuro "Turok" para la prueba de clear
-constexpr float kClearR = 0.08f, kClearG = 0.22f, kClearB = 0.10f;
+// Color de fondo como diagnóstico: verde = VFS y localización OK, rojo = fallo
+constexpr float kOkR = 0.08f, kOkG = 0.22f, kOkB = 0.10f;
+constexpr float kErrR = 0.35f, kErrG = 0.05f, kErrB = 0.05f;
+
+constexpr const char* kLocPath = "localization/loc_spanish.txt";
+constexpr std::size_t kLocMaxBytes = 4u << 20;  // límite de cordura para el archivo de texto
+constexpr std::size_t kLocPreview = 8;           // cadenas mostradas de cada tipo
+
+// Una cadena por línea en logcat: escapa saltos de línea del texto traducido
+std::string oneLine(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '\n') out += "\\n";
+        else if (c == '\r' || c == '\t') out += ' ';
+        else out += c;
+    }
+    return out;
+}
+
+// Monta el VFS, carga loc_spanish.txt y lo resume en logcat. Devuelve true si todo fue bien.
+bool runVfsDiagnostics(vfs::Vfs& fs) {
+    const char* ext = SDL_AndroidGetExternalStoragePath();
+    const std::string extDir = ext ? ext : "";
+    if (!ext) LOGE("VFS: sin almacenamiento externo: %s", SDL_GetError());
+
+    // Base: assets del APK (o almacenamiento interno); si no hay, mountStandardLayers
+    // intenta <ext>/game_data/game.kpf
+    std::string err;
+    auto base = vfs::openSdlSource("game_data/game.kpf", &err);
+    if (!base) LOGI("VFS: game.kpf no está en el APK (%s); se busca en %s", err.c_str(), extDir.c_str());
+
+    const vfs::MountReport rep = vfs::mountStandardLayers(fs, std::move(base), "apk:game_data/game.kpf", extDir);
+    for (const std::string& e : rep.errors) LOGE("VFS: %s", e.c_str());
+
+    const vfs::Stats st = fs.stats();
+    for (const vfs::LayerStats& l : st.layers) {
+        LOGI("VFS capa %-28s %6zu archivos, %zu rechazados", l.name.c_str(), l.files, l.rejected);
+    }
+    LOGI("VFS: %zu capas, %zu archivos montados (únicos)", st.layers.size(), st.uniqueFiles);
+    if (!rep.baseOk) {
+        LOGE("VFS: no se pudo montar game.kpf. Ejecuta: python3 tools/prepare_assets.py install --mode adb");
+        return false;
+    }
+
+    auto data = fs.read(kLocPath);
+    if (!data || data->size() > kLocMaxBytes) {
+        LOGE("LOC: no se pudo leer %s", kLocPath);
+        return false;
+    }
+    const std::string* from = fs.origin(kLocPath);
+    const loc::Table t = loc::parse(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()));
+    LOGI("LOC: %s (%s): %zu indexadas, %zu con clave, %zu mal formadas, %zu duplicadas",
+         kLocPath, from ? from->c_str() : "?", t.indexed().size(), t.keyed().size(), t.malformed(),
+         t.duplicates());
+    for (std::size_t i = 0; i < t.indexed().size() && i < kLocPreview; ++i) {
+        LOGI("LOC [%zu] %s", i, oneLine(t.indexed()[i]).c_str());
+    }
+    for (std::size_t i = 0; i < t.keyed().size() && i < kLocPreview; ++i) {
+        LOGI("LOC %s = %s", t.keyed()[i].first.c_str(), oneLine(t.keyed()[i].second).c_str());
+    }
+    return !t.indexed().empty() || !t.keyed().empty();
+}
 
 // glGetString puede devolver nullptr si no hay contexto válido: nunca pasar nullptr a %s
 const char* glStr(GLenum name) {
@@ -85,6 +150,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
     logVersions();
     updateViewport(window);
 
+    vfs::Vfs fs;
+    const bool vfsOk = runVfsDiagnostics(fs);
+    const float clearR = vfsOk ? kOkR : kErrR;
+    const float clearG = vfsOk ? kOkG : kErrG;
+    const float clearB = vfsOk ? kOkB : kErrB;
+
     std::vector<SDL_GameController*> controllers;
     bool running = true;
     bool paused = false;
@@ -146,7 +217,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
             continue;
         }
 
-        glClearColor(kClearR, kClearG, kClearB, 1.0f);
+        glClearColor(clearR, clearG, clearB, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         SDL_GL_SwapWindow(window);
     }
