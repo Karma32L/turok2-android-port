@@ -7,6 +7,7 @@
 #include "input/input_sdl.hpp"
 #include "log.hpp"
 #include "png.hpp"
+#include "text_layout.hpp"
 
 namespace {
 
@@ -17,6 +18,23 @@ constexpr float kFovY = 1.2217305f;  // 70°
 constexpr float kNear = 4.0f;
 constexpr float kFar = 16384.0f;
 
+// Arma en primera persona (kWpn_Bow de defs/weaponInfo.txt + defs/actors/weapons.txt). El modelo
+// mide ~2 900 u: se escala y se coloca en espacio de vista (x derecha, y arriba, z hacia atrás).
+// Escala y offset ajustados a ojo simulando la vista (ver docs/FORMATS.md); afinar en el dispositivo.
+constexpr const char* kWeaponMesh = "char/Weapon_Normal_Bow.skinnedmesh";
+constexpr const char* kWeaponAnim = "anims/Weapon_Normal_Bow.anim";
+constexpr int kWeaponAmmo = 10;                             // initialAmmoAmount
+constexpr float kWeaponScale = 0.01f;
+constexpr render3d::Vec3 kWeaponOffset{7.0f, -7.0f, -10.0f};
+constexpr float kWeaponFovY = 1.2217305f;  // 70°, fijo: no depende del FOV del mundo
+constexpr float kWeaponNear = 1.0f, kWeaponFar = 200.0f;
+constexpr float kGroundSearch = 128.0f;    // al apoyar actores: margen sobre su z para buscar suelo
+
+constexpr const char* kNumbersFont = "fonts/numbers.kfont";
+constexpr const char* kHealthIcon = "gfx/hud/h_health.png";
+constexpr const char* kAmmoIcon = "gfx/hud/ammo/h_a_arrow.png";
+constexpr const char* kWeaponIcon = "gfx/hud/weapons/h_w_bow.png";
+
 constexpr float kTouchLookPerScreen = 2.6f;  // radianes por arrastre de una altura de pantalla
 constexpr float kPadLookRate = 2.4f;          // radianes por segundo con el stick a tope
 
@@ -26,6 +44,9 @@ constexpr render::gl::Color kExit{255, 255, 255, 150};
 constexpr render::gl::Color kButton{255, 255, 255, 120};
 constexpr render::gl::Color kButtonHeld{255, 230, 150, 220};
 constexpr render::gl::Color kFlyOn{150, 220, 255, 230};
+constexpr render::gl::Color kHudIcon{255, 255, 255, 230};
+constexpr render::gl::Color kCrosshair{255, 255, 255, 160};
+constexpr render::gl::Color kNoAmmo{255, 120, 100, 230};
 
 const char* modeName(physics::MoveMode m) {
     switch (m) {
@@ -39,8 +60,9 @@ const char* modeName(physics::MoveMode m) {
 void logBuild(const std::string& msg) { LOGE("WORLD: %s", msg.c_str()); }
 
 // Iconos del HUD generados en código (sin assets): disco suave, anillo, anillo con aspa,
-// anillo con flecha arriba/abajo (saltar/agacharse) y anillo con rombo (vuelo libre)
-enum class Icon { Disc, Ring, Exit, Up, Down, Fly };
+// anillo con flecha arriba/abajo (saltar/agacharse), anillo con rombo (vuelo libre) y anillo con
+// mira (disparar)
+enum class Icon { Disc, Ring, Exit, Up, Down, Fly, Fire };
 
 // Distancia de p al segmento a-b (en el espacio normalizado del icono)
 float segDist(float px, float py, float ax, float ay, float bx, float by) {
@@ -79,6 +101,10 @@ render::Image makeIcon(Icon kind) {
                                  segDist(dx, dy, 0.4f, 0.2f * s, 0.0f, -0.25f * s));
                 } else if (kind == Icon::Fly) {
                     d = std::fabs(std::fabs(dx) + std::fabs(dy) - 0.4f) * 0.7071f;  // rombo
+                } else if (kind == Icon::Fire) {
+                    // Mira: círculo interior y cuatro marcas
+                    d = std::fabs(r - 0.35f);
+                    if (r > 0.45f && r < 0.7f) d = std::min(d, std::min(std::fabs(dx), std::fabs(dy)));
                 }
                 a = std::max(a, std::clamp((0.09f - d) * c, 0.0f, 1.0f));
             }
@@ -88,7 +114,108 @@ render::Image makeIcon(Icon kind) {
     return img;
 }
 
+// Matriz de mundo del arma: inversa de la vista · T(offset) · ejes · escala. Ejes del modelo de
+// arma: adelante −Y, arriba +Z, derecha −X → vista: x = −X, y = Z, z = Y (rotación propia, det 1).
+render3d::Mat4 weaponMatrix(render3d::Vec3 eye, float yaw, float pitch, render3d::Vec3 offset) {
+    using render3d::Vec3;
+    const Vec3 f = render3d::normalize(render3d::viewForward(yaw, pitch));
+    const Vec3 sx = render3d::normalize(render3d::cross(f, Vec3{0, 0, 1}));
+    const Vec3 u = render3d::cross(sx, f);
+    // Base de la vista en el mundo: columnas (derecha, arriba, atrás)
+    const Vec3 cols[3] = {sx, u, f * -1.0f};
+    // Modelo → vista (filas): x_v = −x_m, y_v = z_m, z_v = y_m
+    const float axes[3][3] = {{-1, 0, 0}, {0, 0, 1}, {0, 1, 0}};
+    render3d::Mat4 m;
+    for (int col = 0; col < 3; ++col) {
+        // Columna `col` de (base · axes · escala)
+        Vec3 c{0, 0, 0};
+        for (int k = 0; k < 3; ++k) c = c + cols[k] * (axes[k][col] * kWeaponScale);
+        m.at(0, col) = c.x;
+        m.at(1, col) = c.y;
+        m.at(2, col) = c.z;
+    }
+    const Vec3 p = eye + sx * offset.x + u * offset.y + f * -offset.z;
+    m.at(0, 3) = p.x;
+    m.at(1, 3) = p.y;
+    m.at(2, 3) = p.z;
+    return m;
+}
+
+std::optional<render::Font> loadFont(const vfs::Vfs& fs, const char* path) {
+    auto data = fs.read(path);
+    if (!data) {
+        LOGE("WORLD: no se pudo leer %s", path);
+        return std::nullopt;
+    }
+    std::string err;  // parseKfont rechaza archivos de más de kMaxKfontBytes
+    auto font = render::parseKfont(std::string_view(reinterpret_cast<const char*>(data->data()), data->size()), &err);
+    if (!font) LOGE("WORLD: %s: %s", path, err.c_str());
+    return font;
+}
+
 }  // namespace
+
+void WorldScene::loadActors(const vfs::Vfs& fs) {
+    actors_ = render3d::buildActors(fs, geo_->actors, &logBuild);
+    // bTrackGround: apoyar en el suelo de la malla de sectores (+ heightOffset)
+    std::size_t grounded = 0;
+    if (world_) {
+        for (render3d::ActorInstance& a : actors_->instances) {
+            if (!a.trackGround) continue;
+            const render3d::Vec3 p = a.xf.pos;
+            const int s = world_->locate({p.x, p.y}, p.z, kGroundSearch);
+            if (s == physics::kNoSector) continue;
+            a.xf.pos.z = world_->floorZ(s, {p.x, p.y}) + a.heightOffset;
+            ++grounded;
+        }
+    }
+    const auto& st = actors_->stats;
+    LOGI("WORLD: actores: %zu colocados (%zu apoyados en el suelo), %zu sin modelo, %zu omitidos; %zu modelos "
+         "(%zu fallidos), %zu materiales (%zu sin definir); %zu warps/portales (sin transición todavía)",
+         st.placed, grounded, st.withoutModel, st.skipped, actors_->models.size(), st.modelsFailed,
+         actors_->materials.size(), st.materialsMissing, actors_->markers.size());
+}
+
+void WorldScene::loadWeapon(const vfs::Vfs& fs) {
+    render3d::MapActor bow;
+    bow.skinnedMesh = kWeaponMesh;
+    bow.anim = kWeaponAnim;
+    // El VFS normaliza al leer, pero las rutas del ActorSet deben coincidir con las normalizadas
+    if (auto m = vfs::normalizePath(bow.skinnedMesh)) bow.skinnedMesh = *m;
+    if (auto a = vfs::normalizePath(bow.anim)) bow.anim = *a;
+    weaponModel_ = render3d::buildActors(fs, {bow}, &logBuild);
+    if (weaponModel_->models.empty() || !weaponModel_->models[0].anims) {
+        LOGE("WORLD: arma %s no disponible: se juega sin arma", kWeaponMesh);
+        weaponModel_.reset();
+        return;
+    }
+    weapon_.emplace(&*weaponModel_->models[0].anims, kWeaponAmmo);
+    LOGI("WORLD: arma %s: %zu huesos, %zu clips", kWeaponMesh, weaponModel_->models[0].mesh.boneCount(),
+         weaponModel_->models[0].anims->clips.size());
+}
+
+void WorldScene::initHudGl(const vfs::Vfs& fs) {
+    std::string err;
+    auto image = [&fs](const char* path, render::gl::Texture& dst) {
+        if (auto t = render3d::gl::loadVfsTexture(fs, path)) dst = std::move(*t);
+    };
+    image(kHealthIcon, healthIcon_);
+    image(kAmmoIcon, ammoIcon_);
+    image(kWeaponIcon, weaponIcon_);
+    numbers_ = loadFont(fs, kNumbersFont);
+    if (numbers_) {
+        auto data = fs.read(numbers_->texture);
+        auto img = data ? render::decodePng(data->data(), data->size(), &err) : std::nullopt;
+        auto tex = img ? render::gl::Texture::create(*img, numbers_->linearFilter, false, &err) : std::nullopt;
+        if (tex) {
+            render::dropGlyphsOutside(*numbers_, img->width, img->height);
+            numbersAtlas_ = std::move(*tex);
+        } else {
+            LOGE("WORLD: atlas %s: %s", numbers_->texture.c_str(), err.c_str());
+            numbers_.reset();
+        }
+    }
+}
 
 bool WorldScene::initGl(const vfs::Vfs& fs) {
     std::string err;
@@ -101,6 +228,11 @@ bool WorldScene::initGl(const vfs::Vfs& fs) {
     if (!sky_.init(geo_->skyLayers, geo_->skyMaterials, fs, &err)) {
         LOGE("WORLD: cielo: %s", err.c_str());  // no es fatal: queda el fondo de niebla
     }
+    // Actores y arma: no son fatales (el nivel se juega sin ellos)
+    if (actors_ && !actorRenderer_.init(*actors_, fs, &err)) LOGE("WORLD: actores: %s", err.c_str());
+    if (weaponModel_ && !weaponRenderer_.init(*weaponModel_, fs, &err)) LOGE("WORLD: arma: %s", err.c_str());
+    LOGI("WORLD: texturas de actores %zu (%zu fallidas), de arma %zu (%zu fallidas)", actorRenderer_.texturesLoaded(),
+         actorRenderer_.texturesFailed(), weaponRenderer_.texturesLoaded(), weaponRenderer_.texturesFailed());
     hud_.emplace();
     if (!hud_->init(&err)) {
         LOGE("WORLD: HUD: %s", err.c_str());  // no es fatal: se juega sin HUD
@@ -116,6 +248,8 @@ bool WorldScene::initGl(const vfs::Vfs& fs) {
     icon(Icon::Up, jumpIcon_);
     icon(Icon::Down, crouchIcon_);
     icon(Icon::Fly, flyIcon_);
+    icon(Icon::Fire, fireIcon_);
+    initHudGl(fs);
     return true;
 }
 
@@ -143,6 +277,10 @@ bool WorldScene::load(const vfs::Vfs& fs) {
     } else {
         LOGI("WORLD: el nivel no trae colisión: solo vuelo libre");
     }
+
+    loadActors(fs);
+    loadWeapon(fs);
+    health_ = 100;
 
     if (!initGl(fs)) {
         unload();
@@ -174,6 +312,12 @@ bool WorldScene::load(const vfs::Vfs& fs) {
 void WorldScene::unload() {
     renderer_.release();
     sky_.release();
+    actorRenderer_.release();
+    weaponRenderer_.release();
+    weapon_.reset();  // antes que weaponModel_, a cuyas animaciones apunta
+    weaponModel_.reset();
+    actors_.reset();
+    numbers_.reset();
     player_.reset();  // antes que world_, al que apunta
     world_.reset();
     hud_.reset();
@@ -183,6 +327,11 @@ void WorldScene::unload() {
     jumpIcon_ = {};
     crouchIcon_ = {};
     flyIcon_ = {};
+    fireIcon_ = {};
+    healthIcon_ = {};
+    ammoIcon_ = {};
+    weaponIcon_ = {};
+    numbersAtlas_ = {};
     geo_.reset();
     sticks_.reset();
 }
@@ -190,6 +339,8 @@ void WorldScene::unload() {
 void WorldScene::abandonGl() {
     renderer_.abandon();
     sky_.abandon();
+    actorRenderer_.abandon();
+    weaponRenderer_.abandon();
     if (hud_) hud_->abandon();
     hud_.reset();
     disc_.abandon();
@@ -198,6 +349,11 @@ void WorldScene::abandonGl() {
     jumpIcon_.abandon();
     crouchIcon_.abandon();
     flyIcon_.abandon();
+    fireIcon_.abandon();
+    healthIcon_.abandon();
+    ammoIcon_.abandon();
+    weaponIcon_.abandon();
+    numbersAtlas_.abandon();
 }
 
 bool WorldScene::reloadGl(const vfs::Vfs& fs) {
@@ -244,6 +400,8 @@ void WorldScene::update(float dt, const std::vector<SDL_GameController*>& contro
     in.pitchDelta = -touchLook.y * lookScale - pad.look.y * kPadLookRate * padDt;
     in.fast = pad.fast;
     player.update(in, dt);
+    if (actors_) actors_->update(dt);
+    updateWeapon(act, in, padDt);
 
     if (player.mode() != lastMode_ || player.areaIndex() != lastArea_) {
         LOGI("WORLD: %s, área %d, (%.0f, %.0f, %.0f)", modeName(player.mode()), player.areaIndex(), player.feet().x,
@@ -253,6 +411,23 @@ void WorldScene::update(float dt, const std::vector<SDL_GameController*>& contro
     }
     if (std::isfinite(dt) && dt > 0.0f) time_ = std::fmod(time_ + std::min(dt, 1.0f), 3600.0f);
     fog_ = render3d::approachFog(fog_, targetFog(), dt);
+}
+
+void WorldScene::updateWeapon(const input::PadActions& act, const physics::PlayerInput& in, float dt) {
+    if (!weapon_ || !player_ || dt <= 0.0f) return;
+    const physics::PlayerController& p = *player_;
+    game::WeaponInput w;
+    const render3d::Vec3 v = p.velocity();
+    w.speed = std::sqrt(v.x * v.x + v.y * v.y);
+    w.onGround = p.onGround() && p.mode() == physics::MoveMode::Walk;
+    // En vuelo libre RT sube la cámara: solo dispara el botón táctil o X
+    const bool padFire = act.fire && p.mode() != physics::MoveMode::Fly;
+    w.fireHeld = (padFire || sticks_.held(input::Button::Fire)) && p.mode() != physics::MoveMode::Swim;
+    w.yawRate = in.yawDelta / dt;
+    w.pitchRate = in.pitchDelta / dt;
+    const int before = weapon_->ammo();
+    weapon_->update(w, dt);
+    if (weapon_->firedThisUpdate()) LOGI("WORLD: flecha disparada (%d → %d)", before, weapon_->ammo());
 }
 
 render3d::Fog WorldScene::targetFog() {
@@ -284,7 +459,36 @@ void WorldScene::draw(int viewportW, int viewportH) {
     const render3d::Vec3 eye = player_ ? player_->eye() : render3d::Vec3{};
     if (!underwater_) sky_.draw(vp, eye, time_, fog_);  // bajo el agua no se ve el cielo
     renderer_.draw(vp, eye, fog_);
+    drawActors(vp, eye);
+    drawWeapon(eye);
     drawHud();
+}
+
+void WorldScene::drawActors(const render3d::Mat4& vp, render3d::Vec3 eye) {
+    if (!actors_ || !actorRenderer_.ready()) return;
+    actorRenderer_.begin(vp, eye, fog_);
+    for (const render3d::ActorInstance& a : actors_->instances) {
+        actors_->palette(a, palette_);
+        actorRenderer_.drawModel(a.model, actors_->modelMatrix(a), palette_);
+    }
+    actorRenderer_.end();
+}
+
+void WorldScene::drawWeapon(render3d::Vec3 eye) {
+    // Bajo el agua el arco no se usa (allowUnderwater FALSE): se guarda
+    if (!weapon_ || !weaponRenderer_.ready() || !player_ || player_->mode() == physics::MoveMode::Swim) return;
+    const render3d::AnimClip* clip = weapon_->clip();
+    if (clip) render3d::evaluatePose(*clip, weaponModel_->models[0].mesh.parents, weapon_->clipTime(),
+                                     weapon_->clipLoops(), palette_);
+    else render3d::identityPose(weaponModel_->models[0].mesh.boneCount(), palette_);
+    // Profundidad propia: el arma nunca atraviesa paredes cercanas
+    glClear(GL_DEPTH_BUFFER_BIT);
+    const render3d::Mat4 proj = render3d::perspective(kWeaponFovY, viewW_ / viewH_, kWeaponNear, kWeaponFar);
+    const render3d::Mat4 vp = render3d::mul(proj, player_->view());
+    const render3d::Vec3 offset = kWeaponOffset + weapon_->offset();
+    weaponRenderer_.begin(vp, eye, fog_);
+    weaponRenderer_.drawModel(0, weaponMatrix(eye, player_->yaw(), player_->pitch(), offset), palette_);
+    weaponRenderer_.end();
 }
 
 void WorldScene::drawHud() {
@@ -307,5 +511,44 @@ void WorldScene::drawHud() {
     button(input::Button::Crouch, crouchIcon_, kButton);
     const bool flying = player_ && player_->mode() == physics::MoveMode::Fly;
     button(input::Button::Fly, flyIcon_, flying ? kFlyOn : kButton);
+    if (weapon_) button(input::Button::Fire, fireIcon_, kButton);
+    drawStatus(hud);
     hud.end();
+}
+
+// Mira y, arriba a la izquierda junto al botón de salida, vida, arma y munición
+void WorldScene::drawStatus(render::gl::SpriteBatch& hud) {
+    const float unit = std::min(viewW_, viewH_);
+    if (weapon_) {
+        const float c = unit * 0.012f;
+        hud.drawImage(disc_, viewW_ * 0.5f - c, viewH_ * 0.5f - c, 2 * c, 2 * c, kCrosshair);
+    }
+    const ui::Rect exit = sticks_.exitRect();
+    const float icon = exit.h * 0.8f, margin = exit.x;
+    float x = exit.x + exit.w + 2.0f * margin;
+    const float y = exit.y + (exit.h - icon) * 0.5f;
+    auto number = [&](int value, render::gl::Color color) {
+        if (!numbers_ || !numbersAtlas_.id()) return;
+        const render::TextLayout t =
+            render::layoutText(*numbers_, std::to_string(value), numbersAtlas_.width(), numbersAtlas_.height());
+        if (t.height <= 0.0f) return;
+        const float scale = icon / t.height;
+        const render::TextLayout ts = render::layoutText(*numbers_, std::to_string(value), numbersAtlas_.width(),
+                                                         numbersAtlas_.height(), scale);
+        hud.drawText(numbersAtlas_, ts, x, y, color);
+        x += ts.width + margin * 0.5f;
+    };
+    auto picture = [&](const render::gl::Texture& t) {
+        if (!t.id()) return;
+        hud.drawImage(t, x, y, icon, icon, kHudIcon);
+        x += icon + margin * 0.3f;
+    };
+    picture(healthIcon_);
+    number(health_, kHudIcon);
+    x += margin;
+    if (weapon_) {
+        picture(weaponIcon_);
+        picture(ammoIcon_);
+        number(weapon_->ammo(), weapon_->ammo() > 0 ? kHudIcon : kNoAmmo);
+    }
 }
