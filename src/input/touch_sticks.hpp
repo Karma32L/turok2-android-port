@@ -4,8 +4,8 @@
 //   - un dedo que empieza en la mitad derecha arrastra la cámara (delta en píxeles);
 //   - un toque en el botón de salida (esquina superior izquierda) pide volver al menú;
 //   - botones de acción mantenidos: Saltar/nadar arriba y Agacharse/bucear (abajo a la
-//     derecha) y Vuelo libre (arriba a la derecha). Un dedo que empieza en un botón no mueve
-//     la cámara aunque se arrastre.
+//     derecha), Disparar (encima de Saltar) y Vuelo libre (arriba a la derecha). Un dedo que
+//     empieza en un botón no mueve la cámara aunque se arrastre.
 // Coordenadas en píxeles del framebuffer, origen arriba-izquierda.
 #pragma once
 
@@ -23,8 +23,8 @@ struct Vec2 {
 // magnitud de salida nunca supera 1. Entradas no finitas → (0, 0).
 Vec2 radialDeadZone(Vec2 v, float deadZone);
 
-enum class Button { Jump, Crouch, Fly };
-constexpr int kButtonCount = 3;
+enum class Button { Jump, Crouch, Fly, Fire };
+constexpr int kButtonCount = 4;
 
 class TouchSticks {
 public:

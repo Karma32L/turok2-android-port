@@ -17,6 +17,7 @@
 
 #include "atmosphere.hpp"
 #include "level_builder.hpp"
+#include "material_gl.hpp"
 #include "math3d.hpp"
 #include "render/gl/gl_renderer.hpp"
 
@@ -28,9 +29,6 @@ namespace render3d::gl {
 
 // Niebla lineal por distancia (ver atmosphere.hpp)
 using FogParams = Fog;
-
-// PNG del VFS → textura con mipmaps (nullopt y log si falta o es inválido)
-std::optional<render::gl::Texture> loadVfsTexture(const vfs::Vfs& fs, const std::string& path);
 
 struct UploadStats {
     std::size_t textures = 0;        // texturas distintas subidas
@@ -58,7 +56,7 @@ private:
     enum Pass { Opaque, Masked, Translucent };
     struct Draw {
         Pass pass = Opaque;
-        std::size_t texture = 0;  // índice en textures_ (0 = blanca)
+        std::size_t material = 0;  // índice en LevelGeometry::materials (textura vía textures_)
         GLuint sampler = 0;
         bool cull = true, depthWrite = true, fullbright = false;
         float alphaRef = -1.0f;  // < 0: sin alpha test
@@ -67,15 +65,13 @@ private:
     };
 
     bool initProgram(std::string* err);
-    void initSamplers();
-    GLuint samplerFor(const Material& m) const;
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0, ibo_ = 0;
-    GLuint samplers_[3][2] = {};  // [WrapMode][lineal]
+    SamplerSet samplers_;
+    MaterialTextures textures_;
     GLint uViewProj_ = -1, uTex_ = -1, uDiffuse_ = -1, uAlphaRef_ = -1, uFullbright_ = -1;
     GLint uSunDir_ = -1, uSunColor_ = -1, uAmbient_ = -1;
     GLint uCamPos_ = -1, uFogColor_ = -1, uFogRange_ = -1;
-    std::vector<render::gl::Texture> textures_;
     std::vector<Draw> draws_;  // ordenados por pasada
 };
 

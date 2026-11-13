@@ -117,6 +117,10 @@ PadActions PadActionReader::read(const std::vector<SDL_GameController*>& control
             out.crouch = true;
         }
         if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_BACK)) back = true;
+        if (axis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > kTriggerDeadZone ||
+            SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_X)) {
+            out.fire = true;
+        }
     }
     out.toggleFly = back && !backWasDown_;
     backWasDown_ = back;

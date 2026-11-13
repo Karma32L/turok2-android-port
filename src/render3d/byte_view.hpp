@@ -50,6 +50,12 @@ public:
     std::size_t pos() const { return pos_; }
     std::size_t remaining() const { return v_.size - pos_; }
 
+    bool u8(std::uint8_t& out) {
+        if (remaining() < 1) return false;
+        out = v_.data[pos_++];
+        return true;
+    }
+
     bool u16(std::uint16_t& out) {
         if (remaining() < 2) return false;
         const std::uint8_t* p = v_.data + pos_;

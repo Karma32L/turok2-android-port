@@ -115,12 +115,19 @@ TEST(botones_de_accion) {
     TouchSticks t = sticks();  // lado corto 1000: botones de 170 px abajo a la derecha
     using input::Button;
     const ui::Rect j = t.buttonRect(Button::Jump), c = t.buttonRect(Button::Crouch), f = t.buttonRect(Button::Fly);
+    const ui::Rect x = t.buttonRect(Button::Fire);
     // Dentro de la pantalla, en la mitad derecha y sin solaparse entre sí ni con la salida
-    for (const ui::Rect& r : {j, c, f}) {
+    for (const ui::Rect& r : {j, c, f, x}) {
         CHECK(r.x >= 1000.0f && r.x + r.w <= 2000.0f && r.y >= 0.0f && r.y + r.h <= 1000.0f);
         CHECK(!t.exitRect().contains(r.x + r.w / 2, r.y + r.h / 2));
     }
     CHECK(!j.contains(c.x + c.w / 2, c.y + c.h / 2) && !c.contains(j.x + j.w / 2, j.y + j.h / 2));
+    // Disparar: encima de Saltar sin solaparse con él ni con Vuelo libre
+    CHECK(x.y + x.h <= j.y && x.y >= f.y + f.h);
+    t.fingerDown(9, x.x + x.w / 2, x.y + x.h / 2);
+    CHECK(t.held(Button::Fire) && t.takeLookDelta().x == 0.0f);
+    t.fingerUp(9, x.x + x.w / 2, x.y + x.h / 2);
+    CHECK(!t.held(Button::Fire));
     CHECK(f.y < 200.0f);
 
     CHECK(!t.held(Button::Jump) && !t.takePressed(Button::Jump));

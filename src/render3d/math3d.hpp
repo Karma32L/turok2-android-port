@@ -66,6 +66,39 @@ struct InstanceTransform {
     bool mirrors() const { return scale.x * scale.y * scale.z < 0.0f; }
 };
 
+// ---------------------------------------------------------------------------- cuaterniones
+
+// Cuaternión (x, y, z, w) como en los .anim; se usa normalizado
+struct Quat {
+    float x = 0, y = 0, z = 0, w = 1;
+};
+
+inline float dot(Quat a, Quat b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+
+// Normalizado; un cuaternión casi nulo o con longitud no finita se convierte en la identidad
+inline Quat normalize(Quat q) {
+    const float l = std::sqrt(dot(q, q));
+    if (!(l > 1e-6f) || !std::isfinite(l)) return {};
+    const float k = 1.0f / l;
+    return {q.x * k, q.y * k, q.z * k, q.w * k};
+}
+
+// Interpolación lineal normalizada por el camino corto (suficiente entre frames contiguos)
+inline Quat nlerp(Quat a, Quat b, float t) {
+    const float s = dot(a, b) < 0.0f ? -1.0f : 1.0f;
+    return normalize(Quat{a.x + (s * b.x - a.x) * t, a.y + (s * b.y - a.y) * t, a.z + (s * b.z - a.z) * t,
+                          a.w + (s * b.w - a.w) * t});
+}
+
+inline Mat3 toMat3(Quat q) {
+    const float x = q.x, y = q.y, z = q.z, w = q.w;
+    return {{{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+             {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+             {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}}};
+}
+
+inline Vec3 lerp(Vec3 a, Vec3 b, float t) { return a + (b - a) * t; }
+
 // ---------------------------------------------------------------------------- Mat4 (GL)
 
 struct Mat4 {
@@ -82,6 +115,18 @@ inline Mat4 mul(const Mat4& a, const Mat4& b) {
             for (int k = 0; k < 4; ++k) s += a.at(row, k) * b.at(k, col);
             r.at(row, col) = s;
         }
+    return r;
+}
+
+// Matriz de modelo de una transformación de instancia: p' = pos + R · (escala ⊙ p)
+inline Mat4 modelMatrix(const InstanceTransform& xf) {
+    Mat4 r;
+    const float s[3] = {xf.scale.x, xf.scale.y, xf.scale.z};
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) r.at(row, col) = xf.rot.m[row][col] * s[col];
+    r.at(0, 3) = xf.pos.x;
+    r.at(1, 3) = xf.pos.y;
+    r.at(2, 3) = xf.pos.z;
     return r;
 }
 

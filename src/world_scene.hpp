@@ -1,7 +1,8 @@
 // Escena InGame: carga el primer nivel de la campaña, lo dibuja (cielo, niebla por área,
-// geometría) y deja recorrerlo con el jugador físico sobre los sectores del .map: caminar,
-// saltar, agacharse, nadar, o vuelo libre de depuración. Sticks táctiles + botones de acción
-// + mando. Solo app (SDL + GLES).
+// geometría, actores animados) y deja recorrerlo con el jugador físico sobre los sectores del
+// .map: caminar, saltar, agacharse, nadar, o vuelo libre de depuración. Arma en primera persona
+// (arco) con disparo y HUD de vida/munición. Sticks táctiles + botones de acción + mando.
+// Solo app (SDL + GLES).
 //
 // Ciclo de vida GL: load() crea todo; unload() lo libera con el contexto vivo; tras
 // SDL_RENDER_DEVICE_RESET se llama a abandonGl() y después a reloadGl() (la geometría en
@@ -15,14 +16,18 @@
 
 #include "atmosphere.hpp"
 #include "input/input_sdl.hpp"
+#include "kfont.hpp"
+#include "level_actors.hpp"
 #include "level_builder.hpp"
 #include "player_controller.hpp"
 #include "render/gl/gl_renderer.hpp"
+#include "render3d/gl/skinned_renderer.hpp"
 #include "render3d/gl/sky_renderer.hpp"
 #include "render3d/gl/world_renderer.hpp"
 #include "sector_world.hpp"
 #include "touch_sticks.hpp"
 #include "vfs.hpp"
+#include "weapon_view.hpp"
 
 class WorldScene {
 public:
@@ -44,7 +49,14 @@ public:
 
 private:
     bool initGl(const vfs::Vfs& fs);
+    void initHudGl(const vfs::Vfs& fs);
+    void loadActors(const vfs::Vfs& fs);
+    void loadWeapon(const vfs::Vfs& fs);
+    void updateWeapon(const input::PadActions& act, const physics::PlayerInput& in, float dt);
+    void drawActors(const render3d::Mat4& vp, render3d::Vec3 eye);
+    void drawWeapon(render3d::Vec3 eye);
     void drawHud();
+    void drawStatus(render::gl::SpriteBatch& hud);
     render3d::Fog targetFog();  // niebla del área bajo la cámara (actualiza underwater_)
 
     std::optional<render3d::LevelGeometry> geo_;
@@ -59,7 +71,19 @@ private:
     physics::MoveMode lastMode_ = physics::MoveMode::Fly;
     int lastArea_ = -1;
     input::TouchSticks sticks_;
+    // Actores del nivel (CPU) y su renderer
+    std::optional<render3d::ActorSet> actors_;
+    render3d::gl::SkinnedRenderer actorRenderer_;
+    // Arma: modelo (un ActorSet de 1 modelo) y lógica; weapon_ apunta a las animaciones de
+    // weaponModel_, así que se destruye antes
+    std::optional<render3d::ActorSet> weaponModel_;
+    render3d::gl::SkinnedRenderer weaponRenderer_;
+    std::optional<game::WeaponView> weapon_;
+    std::vector<render3d::BoneMatrix> palette_;  // reutilizada entre llamadas
+    int health_ = 100;
     std::optional<render::gl::SpriteBatch> hud_;  // optional: se destruye/recrea con el contexto
-    render::gl::Texture disc_, ring_, exitIcon_, jumpIcon_, crouchIcon_, flyIcon_;
+    render::gl::Texture disc_, ring_, exitIcon_, jumpIcon_, crouchIcon_, flyIcon_, fireIcon_;
+    render::gl::Texture healthIcon_, ammoIcon_, weaponIcon_, numbersAtlas_;
+    std::optional<render::Font> numbers_;  // fuente de dígitos del HUD (nullopt: sin números)
     float viewW_ = 0, viewH_ = 0;
 };

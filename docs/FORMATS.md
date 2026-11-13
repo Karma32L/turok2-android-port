@@ -36,9 +36,9 @@ Tiene 22 646 entradas: 22 562 archivos y 84 entradas de directorio.
 | `.png` | 7696 | `89 50 4E 47 0D 0A 1A 0A` + `IHDR` | Imagen estándar | **Soportado** (`src/render/png.*`) |
 | `.kfont` | 4 | texto (`filter`, `texture`, …) | Fuente bitmap | **Soportado** (`src/render/kfont.*`) |
 | `.staticmesh` | 5344 | `02 00 00 00` (u32 LE, versión) | Binario | **Soportado** (`src/render3d/static_mesh.*`) |
-| `.skinnedmesh` | 641 | `03 00 00 00` + floats (¿bbox?) | Binario | Pendiente |
-| `.anim` | 479 | `02 00 00 00` + u32 + … | Binario | Pendiente |
-| `.map` | 177 | `09 00 00 00` + tabla de offsets u32 (`0x30`, `0x38`, …) | Binario | **Parcial**: geometría estática e inicio (`src/render3d/map_file.*`) |
+| `.skinnedmesh` | 641 | `03 00 00 00` (u32 LE, versión) + bbox | Binario | **Soportado** (`src/render3d/skinned_mesh.*`) |
+| `.anim` | 479 | `02 00 00 00` (u32 LE, versión) + nº de clips | Binario | **Soportado** (`src/render3d/anim_file.*`) |
+| `.map` | 177 | `09 00 00 00` + tabla de offsets u32 (`0x30`, `0x38`, …) | Binario | **Parcial**: geometría estática, colisión, cielo y actores (`src/render3d/map_file.*`) |
 | `.wav` | 2075 | `RIFF....WAVEfmt ` | Audio estándar | **Soportado** (`src/audio/wav.*`) |
 | `.kmat` | 3926 | texto (`material …`, `//`) | Material | **Soportado** (`src/render3d/kmat.*`) |
 | `.ksnd`, `.particle`, `.kafx`, `.klf` | ~1650 | texto con bloques `nombre[i] = { … }` | Definiciones | Pendiente |
@@ -187,7 +187,7 @@ no es una versión aparte: es el `n` del contenedor raíz (los 177 mapas tienen 
 | 2 | **colisión**: `{[0] puntos 16 B, [1] áreas 96 B (92 en `n64/`), [2] sectores 18 B}`; en Port_of_Adia_1 556 / 122 / 824 | **Sí**: física, agua y niebla |
 | 3 | `[0]` 2 × u16; `[1]`, `[2]` una entrada de 8 B (2 × f32) por área (¿límites 2D?) | No |
 | **4** | **áreas**: cada una es una hoja vacía o un contenedor `{[0] hoja de instancias, [1] contenedor de rutas .staticmesh}` con tantas rutas como instancias | **Sí** |
-| 5 | actores: contenedor `{[0] cabecera 48 B, [1] componentes}` | Se busca el inicio del jugador |
+| 5 | actores: contenedor de `{[0] cabecera 48 B, [1] componentes}` (ver "Actores") | **Sí**: inicio del jugador y actores con modelo |
 | 6–8 | vacías en los mapas inspeccionados | — |
 
 ### Instancia de malla estática
@@ -212,12 +212,44 @@ los casos que no encajan con ninguna variante son bbox desfasadas (sobre todo en
 cinemática), así que la fórmula de pitch/roll queda como la mejor hipótesis disponible. Con escala espejo se invierte el orden
 de los índices para conservar el CCW.
 
-### Inicio del jugador
+### Actores (sección 5)
 
-Cabecera de actor (48 B): `u32 tipo`, `f32[3]` posición, `f32[3]` escala, `f32[3]` rotación
-(`[0]` = yaw), resto sin identificar. Tipo **100** = `kActor_SPStart` (`defs/common.txt`).
-Los componentes (`kexLightComponent`, `kexSunLightComponent`, `kexWorldComponent`, …) son
-listas de pares clave/valor en texto; todavía no se interpretan.
+Cada actor es un contenedor `{[0] cabecera, [1] componentes}` (54 de 27 986 actores no traen `[1]`).
+
+**Cabecera (hoja de 48 B, `count = 1`):**
+
+| Offset | Tipo | Campo |
+|---:|---|---|
+| 0 | `u32` | tipo (`kActor_*` de `defs/common.txt`; `0xFFFFFFFF` = genérico, p. ej. luces) |
+| 4 | `f32[3]` | posición |
+| 16 | `f32[3]` | escala |
+| 28 | `f32[3]` | rotación (`[0]` = yaw), misma convención que las instancias |
+| 40 | `u32` | sin identificar (en los `kActor_WarpPoint` vale 11000, 11813…: ¿id de warp?) |
+| 44 | 4 B | sin identificar |
+
+**Componentes:** contenedor de componentes; cada uno es `{[0] cadena nombre, [1] contenedor de
+cadenas clave, valor, clave, valor…}`. **Todo en texto**, también los números (`"40.959999"`).
+Las rutas de malla vienen en el propio mapa, así que no hace falta `defs/actors/*.txt` para dibujar:
+
+| Componente | Claves usadas por el port |
+|---|---|
+| `kexRenderMeshComponent` | `mesh` (`.skinnedmesh`), `anim` (`.anim`) |
+| `kexStaticMeshComponent` | `mesh` (`.staticmesh`) |
+| `kexWorldComponent` | `bTrackGround`, `heightOffset`, `radius`, `height` |
+| `kexEnemyAIComponent` | `startAnimID` |
+
+El resto (`kexLightComponent`, `kexRenderSpriteComponent`, `kexScriptComponent`,
+`kexEventLinkComponent`, …) se ignora sin leer sus cadenas: `kexScriptComponent` trae valores
+terminados en `\n` y hasta cientos de pares. 15 actores tienen escala 0 a propósito (ocultos): se
+conservan pero no se dibujan. Validado en los 177 mapas: todas las cabeceras miden 48 B, todos
+los componentes tienen 2 nodos y todas las claves y valores son cadenas. Máximo: 682 actores por mapa.
+
+Port_of_Adia_1 tiene 155 actores: 1 enemigo (`kActor_AI_Endtrail`), 30 con `.skinnedmesh`
+(interruptores, puertas, balizas, destructibles), 32 con `.staticmesh` (LifeForce, flechas, pistola),
+3 `kActor_WarpPoint`, 1 `kActor_Misc_Portal` y luces/sprites de editor. Los Raptoids aparecen a partir de
+`port_of_adia_2`.
+
+**Inicio del jugador:** tipo **100** = `kActor_SPStart`.
 
 ### Capa de cielo (sección 1 `[1]`, 44 B)
 
@@ -304,6 +336,68 @@ bytes de sobra. `render3d::parseStaticMesh` exige índices `< numVerts ≤ 65 53
 finitos, nombres ASCII ≤ 256 B con NUL, y comprueba cada tamaño en 64 bits contra lo que
 queda del archivo **antes** de reservar memoria; los bytes sobrantes invalidan la malla.
 
+## `.skinnedmesh` (versión 3)
+
+Secuencial, little-endian. Validado en **641/641** archivos (sin bytes sobrantes):
+
+```
+u32 version (= 3)
+f32 bbox[6]                      mín, máx
+u8  unk[3]                       el tercero vale 1–5 (sin identificar)
+u32 numBones                     máximo real: 115
+numBones × { u32 n; u16 hijo[n] }                        jerarquía
+numBones × { f32 bbox[6]; u8 a; u8 b; i8 padre; f32 w; u32 u }   35 B por hueso
+u32 (= 1)
+u32 numPoints                    ≤ 12
+numPoints × { f32 pos[3]; u32; u16 hueso; u32 id }       22 B, puntos de anclaje
+u32 (= 1)
+u32 numSurfaces
+numSurfaces × {
+    char material[]              terminado en NUL
+    u16  idx[]                   lista de triángulos terminada en 0xFFFF
+}
+u32 numVerts                     (ausente si numSurfaces = 0: 18 archivos; otros 45 tienen 0)
+numVerts × { f32 pos[3]; f32 uv[2]; f32 normal[3]; u16 hueso }   34 B por vértice
+```
+
+- `padre` < índice del hueso en los 641 archivos (orden topológico) o `-1` en la raíz, y las listas
+  de hijos coinciden siempre con los padres.
+- **Skinning rígido**: un único hueso por vértice, sin pesos.
+- **Los vértices están en el espacio local de su hueso**: `p = G_hueso · v`, donde `G` es la
+  transformación global de la pose (no hay matriz inversa de bind). Comprobado transformando las
+  mallas con sus `.anim`: con esta fórmula el modelo queda unido; con los vértices en bruto, roto.
+- Materiales: mismas rutas que `.staticmesh` (`materials/…/surf_…`), resueltas con `.kmat`.
+- Escala: los modelos de arma son enormes (el arco mide ~2 900 u); el juego los escala al dibujarlos.
+
+## `.anim` (versión 2)
+
+```
+u32 version (= 2)
+u32 numClips
+numClips × {
+    u32 id                       ANIM_* de scripts/animations.txt (p. ej. 20100 = ANIM_WPN_IDLE)
+    u32 numFrames
+    u32 numBones, numBones2      siempre iguales
+    u32 numTransTracks, numRotTracks
+    u32 numEvents
+    f32 ?                        2–3 (sin identificar)
+    u32 flags                    sin identificar
+    u16 ?                        0 en 1 855 de 1 865 clips
+    f32 fps                      15 (1 570 clips), 30, 20, 10 o 5
+    u16 ?
+    numBones × { u16 pistaTraslación; u16 pistaRotación }  0xFFFF = sin pista
+    numBones × { f32 t[3]; f32 q[4] }                     pose fija (28 B) para huesos sin pista
+    numFrames × u32              casi siempre 0 (sin identificar)
+    numTransTracks × numFrames × f32[3]
+    numRotTracks   × numFrames × f32[4]                  cuaternión x, y, z, w
+    numEvents × 50 B             eventos (disparo, partículas…; sin interpretar)
+}
+```
+
+Validado en **479/479** archivos y 1 865 clips (sin bytes sobrantes); los índices de pista de cada clip
+cubren exactamente `0..numTracks-1`. La transformación local de un hueso es `T(t) · R(q)` y la global
+`G = G_padre · local`. La pose fija **cambia por clip**: no es una pose de bind.
+
 ## `.kmat`
 
 Texto con bloques `material <nombre> { … }`. La superficie de una malla se resuelve así:
@@ -340,8 +434,8 @@ Lee el `.kpf` en memoria (nada se extrae) y solo imprime recuentos.
 
 ## Pendiente de análisis
 
-`.skinnedmesh`, `.anim`, los componentes de actores de `.map` y los flags de sector y de área solo
-tienen identificada su estructura general. Cada parser nuevo sigue el mismo patrón:
+Los campos marcados "sin identificar" de `.skinnedmesh`, `.anim` (incluidos los eventos) y de la
+cabecera de actor, y los flags de sector y de área. Cada parser nuevo sigue el mismo patrón:
 - núcleo independiente de GL en su propio módulo;
 - límites comprobados en cada offset y tamaño;
 - tests host con datos sintéticos en `tests/native/`.

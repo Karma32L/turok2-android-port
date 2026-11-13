@@ -113,6 +113,29 @@ inline Bytes actor(std::uint32_t type, V3 pos, float yaw) {
     return container({leaf(48, 1, h), container({})});
 }
 
+// Actor con componentes de texto: {nombre, [clave, valor, …]}
+using Props = std::vector<std::pair<std::string, std::string>>;
+using Component = std::pair<std::string, Props>;
+
+inline Bytes actorWith(std::uint32_t type, V3 pos, const std::vector<Component>& comps, V3 scale = {1, 1, 1},
+                       V3 rot = {}, std::uint32_t tag = 0xFFFFFFFFu) {
+    Bytes h;
+    put32(h, type);
+    for (float f : {pos.x, pos.y, pos.z, scale.x, scale.y, scale.z, rot.x, rot.y, rot.z}) putF(h, f);
+    put32(h, tag);
+    h.resize(48, 0);
+    std::vector<Bytes> cs;
+    for (const Component& c : comps) {
+        std::vector<Bytes> kv;
+        for (const auto& p : c.second) {
+            kv.push_back(leafString(p.first));
+            kv.push_back(leafString(p.second));
+        }
+        cs.push_back(container({leafString(c.first), container(kv)}));
+    }
+    return container({leaf(48, 1, h), container(cs)});
+}
+
 inline Bytes skySection(const std::string& sky) {
     return container({container({leafString(sky), leafString("_default")}), leaf(44, 0, {})});
 }

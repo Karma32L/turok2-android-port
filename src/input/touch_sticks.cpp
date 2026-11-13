@@ -38,6 +38,7 @@ ui::Rect TouchSticks::buttonRect(Button b) const {
     const float margin = side * 0.3f;
     // Saltar en la esquina; Agacharse a su izquierda, algo más abajo (alcance del pulgar)
     if (b == Button::Jump) return {w_ - margin - side, h_ - 2.0f * margin - side, side, side};
+    if (b == Button::Fire) return {w_ - margin - side, h_ - 3.0f * margin - 2.0f * side, side, side};
     return {w_ - 2.0f * (margin + side), h_ - margin - side, side, side};
 }
 
