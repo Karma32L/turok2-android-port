@@ -4,7 +4,9 @@
 //   Enter (ANIM_WPN_ENTER, una vez) → Idle (ANIM_WPN_IDLE) ⇄ Run (ANIM_WPN_RUN) según la velocidad;
 //   pulsar disparo con munición → Charge (ANIM_WPN_CHARGE, se mantiene tensado mientras se pulse);
 //   soltar → Fire (ANIM_WPN_ATK1, una vez, gasta 1 flecha) → Idle/Run.
-// Si un clip no existe en el .anim, el estado usa el de reposo. Sin proyectiles todavía.
+// Si un clip no existe en el .anim, el estado usa el de reposo. Los eventos de los clips (sonido de
+// tensar 408 en CHARGE; soltar 410 y WEAPON_FIRE_PROJECTILE 86 en ATK1) se exponen en events(): la
+// escena reproduce el sonido y lanza la flecha con la carga lastCharge().
 //
 // Balanceo (bob): fase proporcional a la distancia recorrida en el suelo, con un peso que sube y
 // baja suavemente con la velocidad. Inercia (sway): el arma se retrasa al girar la cámara.
@@ -12,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "anim_file.hpp"
 #include "math3d.hpp"
@@ -55,8 +58,12 @@ public:
 
     WeaponState state() const { return state_; }
     int ammo() const { return ammo_; }
-    // true solo en el update en el que se soltó la cuerda (para sonido/proyectil)
+    // true solo en el update en el que se soltó la cuerda
     bool firedThisUpdate() const { return fired_; }
+    // Eventos de animación alcanzados en el último update (apuntan a las animaciones del arma)
+    const std::vector<const render3d::AnimEvent*>& events() const { return events_; }
+    // Segundos que se mantuvo tensado el último disparo
+    float lastCharge() const { return lastCharge_; }
 
     // Clip y tiempo a reproducir (nullptr si no hay animaciones)
     const render3d::AnimClip* clip() const { return clip_; }
@@ -79,6 +86,8 @@ private:
     bool loops_ = false;
     int ammo_ = 0;
     bool fired_ = false;
+    float charge_ = 0.0f, lastCharge_ = 0.0f;
+    std::vector<const render3d::AnimEvent*> events_;
     float speed_ = 0.0f;
     bool onGround_ = true;
     float bobPhase_ = 0.0f, bobWeight_ = 0.0f;

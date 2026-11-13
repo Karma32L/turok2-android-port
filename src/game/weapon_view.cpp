@@ -49,11 +49,15 @@ WeaponState WeaponView::moveState() const {
 
 void WeaponView::update(const WeaponInput& in, float dt) {
     fired_ = false;
+    events_.clear();
     if (!std::isfinite(dt) || dt <= 0.0f) return;
     dt = std::min(dt, kMaxDt);
     speed_ = std::isfinite(in.speed) ? std::max(in.speed, 0.0f) : 0.0f;
     onGround_ = in.onGround;
 
+    // Eventos del tramo [time_, time_ + dt) del clip actual (los del frame 0 de un clip recién
+    // empezado salen en el update siguiente al cambio de estado)
+    if (clip_) render3d::collectEvents(*clip_, time_, dt, loops_, events_);
     time_ += dt;
     if (clip_) {
         // En bucle se envuelve; sin bucle basta con no crecer sin límite pasado el final
@@ -67,6 +71,7 @@ void WeaponView::update(const WeaponInput& in, float dt) {
     case WeaponState::Idle:
     case WeaponState::Run:
         if (in.fireHeld && ammo_ > 0) {
+            charge_ = 0.0f;
             enter(WeaponState::Charge);
         } else if (moveState() != state_) {
             const float keep = time_;  // al alternar idle/run se conserva la fase si cabe
@@ -75,9 +80,11 @@ void WeaponView::update(const WeaponInput& in, float dt) {
         }
         break;
     case WeaponState::Charge:
+        charge_ += dt;
         if (!in.fireHeld) {
             --ammo_;
             fired_ = true;
+            lastCharge_ = charge_;
             enter(WeaponState::Fire);
         }
         break;

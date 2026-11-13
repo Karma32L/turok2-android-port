@@ -4,7 +4,8 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Strict.cmake)
 
 add_library(turok2_combat_core STATIC
     event_links.cpp
-    level_logic.cpp)
+    level_logic.cpp
+    projectile.cpp)
 target_include_directories(turok2_combat_core PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(turok2_combat_core PUBLIC turok2_physics_core turok2_render3d_core)
 set_target_properties(turok2_combat_core PROPERTIES POSITION_INDEPENDENT_CODE ON)

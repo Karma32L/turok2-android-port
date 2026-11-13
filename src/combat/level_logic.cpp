@@ -73,11 +73,14 @@ LevelLogic::LevelLogic(const std::vector<MapActor>& actors, ActorSet& set, const
         const std::string_view cls = a.props.text("scriptClass");
         if (cls == "TurokDoor" && instOf[i] >= 0) addDoor(a, static_cast<std::size_t>(instOf[i]), log);
         else if (cls == "TurokActionObject") addAction(a, instOf[i]);
+        else if (cls == "TurokDestructible" && instOf[i] >= 0) addDestructible(a, static_cast<std::size_t>(instOf[i]));
     }
     if (log) {
         log->push_back(std::to_string(bus_.links()) + " EventLinks, " + std::to_string(doors_.size()) + " puertas, " +
-                       std::to_string(actions_.size()) + " interruptores");
+                       std::to_string(actions_.size()) + " interruptores, " + std::to_string(destructibles_.size()) +
+                       " destructibles");
     }
+    rebuildTargets();
     rebuildObstacles(PlayerState{{}, 0.0f, 0.0f, false});
 }
 
@@ -122,6 +125,76 @@ void LevelLogic::addAction(const MapActor& a, int inst) {
     byTid_.push_back({ac.tid, Kind::Action, actions_.size() - 1});
 }
 
+void LevelLogic::addDestructible(const MapActor& a, std::size_t inst) {
+    Destructible d;
+    d.inst = inst;
+    d.tid = a.tid();
+    d.health = static_cast<int>(std::clamp(a.props.number("startHealth", 1.0f), 1.0f, 1.0e6f));
+    d.flags = flagsOf(a);
+    d.triggerSound = animOf(a, "triggerSound");
+    d.triggerAnim = animOf(a, "triggerAnim");
+    d.radius = a.radius > 0.0f ? a.radius : 32.0f;  // sin dato en el .map: tamaño de un barril
+    d.height = a.height > 0.0f ? a.height : 64.0f;
+    d.solid = !a.nonSolid;
+    destructibles_.push_back(d);
+    byTid_.push_back({d.tid, Kind::Destructible, destructibles_.size() - 1});
+}
+
+bool LevelLogic::destructibleAlive(std::int32_t tid) const {
+    for (const Destructible& d : destructibles_)
+        if (d.tid == tid && !d.dead) return true;
+    return false;
+}
+
+HitKind LevelLogic::damage(int targetId, int amount, LogicOutput& out) {
+    if (targetId < 0 || static_cast<std::size_t>(targetId) >= targetRefs_.size() || amount <= 0) return HitKind::None;
+    const Ref& r = targetRefs_[static_cast<std::size_t>(targetId)];
+    switch (r.kind) {
+    case Kind::Destructible: {
+        Destructible& d = destructibles_[r.index];
+        if (d.dead) return HitKind::None;
+        d.health -= amount;
+        out.log.push_back("destructible TID " + std::to_string(d.tid) + ": " + std::to_string(amount) + " de daño, vida " +
+                          std::to_string(std::max(d.health, 0)));
+        if (d.health <= 0) destroy(d, out);
+        return HitKind::Hard;
+    }
+    case Kind::Door:
+    case Kind::Action: break;
+    }
+    return HitKind::None;
+}
+
+void LevelLogic::destroy(Destructible& d, LogicOutput& out) {
+    if (d.dead) return;
+    d.dead = true;
+    d.health = 0;
+    if (d.triggerSound != 0) out.sounds.push_back(d.triggerSound);
+    ActorInstance& ai = set_.instances[d.inst];
+    // triggerAnim <= 0 → self.Remove(); si no, se reproduce y desaparece al acabar (flag VANISH)
+    if (d.triggerAnim == 0 || !set_.play(ai, d.triggerAnim, false)) ai.visible = false;
+    bus_.signal(d.tid);  // SignalOn: EventLinks con sourceTID = el suyo
+    out.log.push_back("destructible TID " + std::to_string(d.tid) + " destruido");
+}
+
+void LevelLogic::updateDestructibles() {
+    for (const Destructible& d : destructibles_) {
+        ActorInstance& ai = set_.instances[d.inst];
+        if (d.dead && ai.visible && (d.flags & kDestructVanish) && set_.finished(ai)) ai.visible = false;
+    }
+}
+
+void LevelLogic::rebuildTargets() {
+    targets_.clear();
+    targetRefs_.clear();
+    for (std::size_t i = 0; i < destructibles_.size(); ++i) {
+        const Destructible& d = destructibles_[i];
+        if (d.dead || !(d.flags & kDestructImpact)) continue;
+        targets_.push_back({set_.instances[d.inst].xf.pos, d.radius, d.height, static_cast<int>(targets_.size())});
+        targetRefs_.push_back({d.tid, Kind::Destructible, i});
+    }
+}
+
 bool LevelLogic::doorOpen(std::int32_t tid) const {
     for (const Door& d : doors_)
         if (d.tid == tid && !d.blocking) return true;
@@ -135,9 +208,11 @@ void LevelLogic::update(float dt, const PlayerState& player, LogicOutput& out) {
     clipEvents_.clear();
     set_.update(dt, &clipEvents_);
     updateDoors();
+    updateDestructibles();
     messages_.clear();
     bus_.update(dt, messages_);
     for (const Message& m : messages_) deliver(m, out);
+    rebuildTargets();
     rebuildObstacles(player);
 }
 
@@ -153,6 +228,9 @@ void LevelLogic::deliver(const Message& m, LogicOutput& out) {
             break;
         case Kind::Action:
             if (m.message == kMsgTrigger) fire(actions_[r.index], out);
+            break;
+        case Kind::Destructible:
+            if (m.message == kMsgTrigger) destroy(destructibles_[r.index], out);
             break;
         }
     }
@@ -217,6 +295,16 @@ void LevelLogic::rebuildObstacles(const PlayerState& player) {
     obstacles_.clear();
     for (const Door& d : doors_)
         if (d.blocking && d.hasShape) obstacles_.push_back(d.shape);
+    for (const Destructible& d : destructibles_) {
+        if (d.dead || !d.solid) continue;
+        Obstacle o;
+        const Vec3 p = set_.instances[d.inst].xf.pos;
+        o.a = o.b = Vec2{p.x, p.y};
+        o.radius = d.radius;
+        o.zMin = p.z;
+        o.zMax = p.z + d.height;
+        obstacles_.push_back(o);
+    }
     if (player.alive) {
         Obstacle p;
         p.a = p.b = Vec2{player.feet.x, player.feet.y};

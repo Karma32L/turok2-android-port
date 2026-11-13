@@ -62,8 +62,12 @@ private:
     void loadLogic();
     void applyLogic(const combat::LogicOutput& out);
     void loadWeapon(const vfs::Vfs& fs);
+    void loadArrow(const vfs::Vfs& fs);
     void updateWeapon(const input::PadActions& act, const physics::PlayerInput& in, float dt);
+    void fireArrow();
+    void updateArrows(float dt);
     void drawActors(const render3d::Mat4& vp, render3d::Vec3 eye);
+    void drawArrows();
     void drawWeapon(render3d::Vec3 eye);
     void drawHud();
     void drawStatus(render::gl::SpriteBatch& hud);
@@ -92,6 +96,11 @@ private:
     std::optional<render3d::ActorSet> weaponModel_;
     render3d::gl::SkinnedRenderer weaponRenderer_;
     std::optional<game::WeaponView> weapon_;
+    // Flechas en vuelo o clavadas, y su modelo (models/model0036.staticmesh de Arrow.particle)
+    combat::Projectiles arrows_;
+    std::vector<combat::ProjectileHit> hits_;
+    std::optional<render3d::ActorSet> arrowModel_;
+    render3d::gl::SkinnedRenderer arrowRenderer_;
     std::vector<render3d::BoneMatrix> palette_;  // reutilizada entre llamadas
     int health_ = 100;
     audio::AudioDevice* audio_ = nullptr;
