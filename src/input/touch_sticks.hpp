@@ -2,7 +2,10 @@
 //   - un dedo que empieza en la mitad izquierda es un joystick flotante de movimiento
 //     (la base aparece donde se apoya el dedo);
 //   - un dedo que empieza en la mitad derecha arrastra la cámara (delta en píxeles);
-//   - un toque en el botón de salida (esquina superior izquierda) pide volver al menú.
+//   - un toque en el botón de salida (esquina superior izquierda) pide volver al menú;
+//   - botones de acción mantenidos: Saltar/nadar arriba y Agacharse/bucear (abajo a la
+//     derecha) y Vuelo libre (arriba a la derecha). Un dedo que empieza en un botón no mueve
+//     la cámara aunque se arrastre.
 // Coordenadas en píxeles del framebuffer, origen arriba-izquierda.
 #pragma once
 
@@ -20,12 +23,16 @@ struct Vec2 {
 // magnitud de salida nunca supera 1. Entradas no finitas → (0, 0).
 Vec2 radialDeadZone(Vec2 v, float deadZone);
 
+enum class Button { Jump, Crouch, Fly };
+constexpr int kButtonCount = 3;
+
 class TouchSticks {
 public:
     struct Config {
         float radiusFrac = 0.13f;   // radio del joystick, fracción del lado corto
         float deadZone = 0.12f;
         float exitSizeFrac = 0.11f;  // lado del botón de salida, fracción del lado corto
+        float buttonSizeFrac = 0.17f;  // lado de Saltar/Agacharse, fracción del lado corto
     };
 
     struct StickView {
@@ -51,6 +58,11 @@ public:
 
     StickView moveView() const;
     ui::Rect exitRect() const;
+    ui::Rect buttonRect(Button b) const;
+
+    bool held(Button b) const { return buttons_[static_cast<int>(b)].active; }
+    // true si el botón se pulsó desde la llamada anterior (flanco; aunque ya se haya soltado)
+    bool takePressed(Button b);
 
 private:
     struct Finger {
@@ -64,6 +76,8 @@ private:
     Config cfg_;
     float w_ = 0, h_ = 0;
     Finger move_, look_, exit_;
+    Finger buttons_[kButtonCount];
+    bool pressed_[kButtonCount] = {};
     Vec2 lookAccum_;
 };
 

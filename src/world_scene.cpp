@@ -12,7 +12,6 @@ namespace {
 
 // Primer nivel jugable: kLevel_PortOfAdia_1 en defs/mapInfo.txt (ver docs/FORMATS.md)
 constexpr const char* kStartMap = "levels/Port_of_Adia_1.map";
-constexpr float kEyeHeight = 100.0f;  // viewHeight de Player_Standing (defs/postureInfo.txt)
 
 constexpr float kFovY = 1.2217305f;  // 70°
 constexpr float kNear = 4.0f;
@@ -24,11 +23,32 @@ constexpr float kPadLookRate = 2.4f;          // radianes por segundo con el sti
 constexpr render::gl::Color kStickBase{255, 255, 255, 70};
 constexpr render::gl::Color kStickKnob{255, 255, 255, 140};
 constexpr render::gl::Color kExit{255, 255, 255, 150};
+constexpr render::gl::Color kButton{255, 255, 255, 120};
+constexpr render::gl::Color kButtonHeld{255, 230, 150, 220};
+constexpr render::gl::Color kFlyOn{150, 220, 255, 230};
+
+const char* modeName(physics::MoveMode m) {
+    switch (m) {
+    case physics::MoveMode::Walk: return "caminar";
+    case physics::MoveMode::Swim: return "nadar";
+    case physics::MoveMode::Fly: return "vuelo libre";
+    }
+    return "?";
+}
 
 void logBuild(const std::string& msg) { LOGE("WORLD: %s", msg.c_str()); }
 
-// Iconos del HUD generados en código (sin assets): disco suave, anillo y anillo con aspa
-enum class Icon { Disc, Ring, Exit };
+// Iconos del HUD generados en código (sin assets): disco suave, anillo, anillo con aspa,
+// anillo con flecha arriba/abajo (saltar/agacharse) y anillo con rombo (vuelo libre)
+enum class Icon { Disc, Ring, Exit, Up, Down, Fly };
+
+// Distancia de p al segmento a-b (en el espacio normalizado del icono)
+float segDist(float px, float py, float ax, float ay, float bx, float by) {
+    const float vx = bx - ax, vy = by - ay;
+    const float t = std::clamp(((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy), 0.0f, 1.0f);
+    const float dx = px - (ax + vx * t), dy = py - (ay + vy * t);
+    return std::sqrt(dx * dx + dy * dy);
+}
 
 render::Image makeIcon(Icon kind) {
     constexpr std::uint32_t kSize = 128;
@@ -48,12 +68,19 @@ render::Image makeIcon(Icon kind) {
             } else {
                 const float ring = std::clamp((r - 0.84f) * c, 0.0f, 1.0f) * edge;
                 a = ring;
-                if (kind == Icon::Exit) {
+                float d = 1.0f;  // distancia al trazo interior
+                if (kind == Icon::Exit && r < 0.55f) {
                     // Aspa: distancia a las diagonales, dentro del 55 % del radio
-                    const float d1 = std::fabs(dx - dy) * 0.7071f, d2 = std::fabs(dx + dy) * 0.7071f;
-                    const float bar = std::clamp((0.09f - std::min(d1, d2)) * c, 0.0f, 1.0f);
-                    if (r < 0.55f) a = std::max(a, bar);
+                    d = std::min(std::fabs(dx - dy), std::fabs(dx + dy)) * 0.7071f;
+                } else if (kind == Icon::Up || kind == Icon::Down) {
+                    // Chevrón (y de la imagen hacia abajo: arriba = dy negativo)
+                    const float s = kind == Icon::Up ? 1.0f : -1.0f;
+                    d = std::min(segDist(dx, dy, -0.4f, 0.2f * s, 0.0f, -0.25f * s),
+                                 segDist(dx, dy, 0.4f, 0.2f * s, 0.0f, -0.25f * s));
+                } else if (kind == Icon::Fly) {
+                    d = std::fabs(std::fabs(dx) + std::fabs(dy) - 0.4f) * 0.7071f;  // rombo
                 }
+                a = std::max(a, std::clamp((0.09f - d) * c, 0.0f, 1.0f));
             }
             img.pixels[(std::size_t{y} * kSize + x) * 4 + 3] = static_cast<std::uint8_t>(a * 255.0f + 0.5f);
         }
@@ -86,6 +113,9 @@ bool WorldScene::initGl(const vfs::Vfs& fs) {
     icon(Icon::Disc, disc_);
     icon(Icon::Ring, ring_);
     icon(Icon::Exit, exitIcon_);
+    icon(Icon::Up, jumpIcon_);
+    icon(Icon::Down, crouchIcon_);
+    icon(Icon::Fly, flyIcon_);
     return true;
 }
 
@@ -119,17 +149,22 @@ bool WorldScene::load(const vfs::Vfs& fs) {
         return false;
     }
 
-    // Cámara: inicio del jugador a la altura de los ojos o, si no hay, centro del nivel
+    // Jugador: en el inicio del .map o, si no hay, en vuelo sobre el centro del nivel
+    player_.emplace(world_ ? &*world_ : nullptr);
     if (geo_->start) {
         const render3d::Vec3 p = geo_->start->pos;
         // El yaw del actor usa la convención del .map, Rz(-r0): en la cámara es -r0
-        camera_.place({p.x, p.y, p.z + kEyeHeight}, -geo_->start->yaw);
-        LOGI("WORLD: cámara en el inicio del jugador (%.0f, %.0f, %.0f)", p.x, p.y, p.z);
+        player_->spawn(p, -geo_->start->yaw);
+        LOGI("WORLD: jugador en el inicio (%.0f, %.0f, %.0f): %s, sector %d", p.x, p.y, p.z,
+             modeName(player_->mode()), player_->sector());
     } else {
         const render3d::Vec3 c = (geo_->boundsMin + geo_->boundsMax) * 0.5f;
-        camera_.place({c.x, c.y, geo_->boundsMax.z + kEyeHeight}, 0.0f, -0.6f);
-        LOGI("WORLD: sin inicio del jugador; cámara sobre el centro del nivel");
+        player_->spawn({c.x, c.y, geo_->boundsMax.z}, 0.0f, -0.6f);
+        player_->setFly(true);
+        LOGI("WORLD: sin inicio del jugador; vuelo libre sobre el centro del nivel");
     }
+    lastMode_ = player_->mode();
+    lastArea_ = player_->areaIndex();
     sticks_.reset();
     time_ = 0.0f;
     fog_ = targetFog();  // sin transición al entrar
@@ -139,11 +174,15 @@ bool WorldScene::load(const vfs::Vfs& fs) {
 void WorldScene::unload() {
     renderer_.release();
     sky_.release();
+    player_.reset();  // antes que world_, al que apunta
     world_.reset();
     hud_.reset();
     disc_ = {};
     ring_ = {};
     exitIcon_ = {};
+    jumpIcon_ = {};
+    crouchIcon_ = {};
+    flyIcon_ = {};
     geo_.reset();
     sticks_.reset();
 }
@@ -156,6 +195,9 @@ void WorldScene::abandonGl() {
     disc_.abandon();
     ring_.abandon();
     exitIcon_.abandon();
+    jumpIcon_.abandon();
+    crouchIcon_.abandon();
+    flyIcon_.abandon();
 }
 
 bool WorldScene::reloadGl(const vfs::Vfs& fs) {
@@ -178,26 +220,52 @@ void WorldScene::update(float dt, const std::vector<SDL_GameController*>& contro
     const input::PadFly pad = input::readPadFly(controllers);
     const float lookScale = viewH_ > 0 ? kTouchLookPerScreen / viewH_ : 0.0f;
 
-    render3d::FlyInput in;
+    const input::PadActions act = padActions_.read(controllers);
+    if (!player_) return;
+    physics::PlayerController& player = *player_;
+
+    // Alternar vuelo libre (Back del mando o botón táctil)
+    const bool touchToggle = sticks_.takePressed(input::Button::Fly);
+    if (act.toggleFly || touchToggle) {
+        const bool wantFly = player.mode() != physics::MoveMode::Fly;
+        if (!player.setFly(wantFly)) LOGI("WORLD: no hay suelo bajo la cámara: sigue el vuelo libre");
+    }
+
+    physics::PlayerInput in;
     in.strafe = touchMove.x + pad.move.x;
     in.forward = touchMove.y + pad.move.y;
-    in.up = pad.up;
+    in.jump = act.jump || sticks_.held(input::Button::Jump);
+    in.crouch = act.crouch || sticks_.held(input::Button::Crouch);
+    // En vuelo: gatillos/RB/LB como antes, y también saltar/agacharse suben y bajan
+    in.flyUp = std::clamp(pad.up + (in.jump ? 1.0f : 0.0f) - (in.crouch ? 1.0f : 0.0f), -1.0f, 1.0f);
     // Arrastrar/empujar a la derecha gira a la derecha (yaw negativo); hacia abajo mira abajo
-    in.yawDelta = -touchLook.x * lookScale - pad.look.x * kPadLookRate * std::min(dt, render3d::FlyCamera::kMaxDt);
-    in.pitchDelta = -touchLook.y * lookScale - pad.look.y * kPadLookRate * std::min(dt, render3d::FlyCamera::kMaxDt);
+    const float padDt = std::isfinite(dt) ? std::clamp(dt, 0.0f, physics::PlayerController::kMaxDt) : 0.0f;
+    in.yawDelta = -touchLook.x * lookScale - pad.look.x * kPadLookRate * padDt;
+    in.pitchDelta = -touchLook.y * lookScale - pad.look.y * kPadLookRate * padDt;
     in.fast = pad.fast;
-    camera_.update(in, dt);
+    player.update(in, dt);
+
+    if (player.mode() != lastMode_ || player.areaIndex() != lastArea_) {
+        LOGI("WORLD: %s, área %d, (%.0f, %.0f, %.0f)", modeName(player.mode()), player.areaIndex(), player.feet().x,
+             player.feet().y, player.feet().z);
+        lastMode_ = player.mode();
+        lastArea_ = player.areaIndex();
+    }
     if (std::isfinite(dt) && dt > 0.0f) time_ = std::fmod(time_ + std::min(dt, 1.0f), 3600.0f);
     fog_ = render3d::approachFog(fog_, targetFog(), dt);
 }
 
 render3d::Fog WorldScene::targetFog() {
     underwater_ = false;
-    if (!world_) return render3d::defaultFog();
-    const render3d::Vec3 eye = camera_.position();
-    const int s = world_->locate({eye.x, eye.y}, eye.z - kEyeHeight, kEyeHeight);
+    if (!world_ || !player_) return render3d::defaultFog();
+    const physics::PlayerController& p = *player_;
+    int s = p.sector();
+    if (p.mode() == physics::MoveMode::Fly) {  // en vuelo no se sigue el sector: el de bajo la cámara
+        const render3d::Vec3 eye = p.eye();
+        s = world_->locate({eye.x, eye.y}, eye.z - p.tuning().standEye, p.tuning().standEye);
+    }
     if (s == physics::kNoSector) return render3d::defaultFog();
-    underwater_ = world_->isWater(s) && eye.z < world_->waterZ(s);
+    underwater_ = p.eyeUnderwater();
     return render3d::fogForArea(world_->area(s), underwater_);
 }
 
@@ -212,8 +280,8 @@ void WorldScene::draw(int viewportW, int viewportH) {
     glClearColor(fog_.color[0], fog_.color[1], fog_.color[2], 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     const render3d::Mat4 proj = render3d::perspective(kFovY, viewW_ / viewH_, kNear, kFar);
-    const render3d::Mat4 vp = render3d::mul(proj, camera_.view());
-    const render3d::Vec3 eye = camera_.position();
+    const render3d::Mat4 vp = render3d::mul(proj, player_ ? player_->view() : render3d::Mat4{});
+    const render3d::Vec3 eye = player_ ? player_->eye() : render3d::Vec3{};
     if (!underwater_) sky_.draw(vp, eye, time_, fog_);  // bajo el agua no se ve el cielo
     renderer_.draw(vp, eye, fog_);
     drawHud();
@@ -231,5 +299,13 @@ void WorldScene::drawHud() {
         hud.drawImage(ring_, v.baseX - r, v.baseY - r, 2 * r, 2 * r, kStickBase);
         hud.drawImage(disc_, v.knobX - k, v.knobY - k, 2 * k, 2 * k, kStickKnob);
     }
+    auto button = [&](input::Button b, const render::gl::Texture& tex, render::gl::Color idle) {
+        const ui::Rect r = sticks_.buttonRect(b);
+        hud.drawImage(tex, r.x, r.y, r.w, r.h, sticks_.held(b) ? kButtonHeld : idle);
+    };
+    button(input::Button::Jump, jumpIcon_, kButton);
+    button(input::Button::Crouch, crouchIcon_, kButton);
+    const bool flying = player_ && player_->mode() == physics::MoveMode::Fly;
+    button(input::Button::Fly, flyIcon_, flying ? kFlyOn : kButton);
     hud.end();
 }

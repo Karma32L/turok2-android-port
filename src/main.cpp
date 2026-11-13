@@ -332,7 +332,10 @@ int main(int /*argc*/, char* /*argv*/[]) {
     while (running) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
-            if (auto a = input::menuActionFromEvent(ev)) applyOutput(menu.onAction(*a));
+            // En el nivel los botones del mando son de acción (A saltar, B agacharse...)
+            if (auto a = inWorld() ? input::worldActionFromEvent(ev) : input::menuActionFromEvent(ev)) {
+                applyOutput(menu.onAction(*a));
+            }
 
             switch (ev.type) {
             case SDL_QUIT:

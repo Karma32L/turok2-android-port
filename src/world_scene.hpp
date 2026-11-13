@@ -1,5 +1,7 @@
-// Escena InGame: carga el primer nivel de la campaña, lo dibuja con WorldRenderer y deja
-// recorrerlo con una cámara libre (sticks táctiles + mando). Solo app (SDL + GLES).
+// Escena InGame: carga el primer nivel de la campaña, lo dibuja (cielo, niebla por área,
+// geometría) y deja recorrerlo con el jugador físico sobre los sectores del .map: caminar,
+// saltar, agacharse, nadar, o vuelo libre de depuración. Sticks táctiles + botones de acción
+// + mando. Solo app (SDL + GLES).
 //
 // Ciclo de vida GL: load() crea todo; unload() lo libera con el contexto vivo; tras
 // SDL_RENDER_DEVICE_RESET se llama a abandonGl() y después a reloadGl() (la geometría en
@@ -12,8 +14,9 @@
 #include <vector>
 
 #include "atmosphere.hpp"
-#include "fly_camera.hpp"
+#include "input/input_sdl.hpp"
 #include "level_builder.hpp"
+#include "player_controller.hpp"
 #include "render/gl/gl_renderer.hpp"
 #include "render3d/gl/sky_renderer.hpp"
 #include "render3d/gl/world_renderer.hpp"
@@ -51,9 +54,12 @@ private:
     render3d::Fog fog_;
     float time_ = 0.0f;
     bool underwater_ = false;
-    render3d::FlyCamera camera_;
+    std::optional<physics::PlayerController> player_;  // apunta a world_ (misma vida)
+    input::PadActionReader padActions_;
+    physics::MoveMode lastMode_ = physics::MoveMode::Fly;
+    int lastArea_ = -1;
     input::TouchSticks sticks_;
     std::optional<render::gl::SpriteBatch> hud_;  // optional: se destruye/recrea con el contexto
-    render::gl::Texture disc_, ring_, exitIcon_;
+    render::gl::Texture disc_, ring_, exitIcon_, jumpIcon_, crouchIcon_, flyIcon_;
     float viewW_ = 0, viewH_ = 0;
 };
