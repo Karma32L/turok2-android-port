@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sin permisos: el esqueleto no necesita ninguno -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- hasCode=false: no hay código Java/Kotlin, solo NativeActivity -->
+    <application
+        android:allowBackup="false"
+        android:hasCode="false"
+        android:label="Turok2 Port">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape">
+
+            <!-- Debe coincidir con el target de src/CMakeLists.txt -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="turok2" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
