@@ -21,7 +21,13 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    // SDL2: solo libSDL2.so compartida, sin lib estática ni tests
+                    "-DSDL_SHARED=ON",
+                    "-DSDL_STATIC=OFF",
+                    "-DSDL_TEST=OFF",
+                )
                 cppFlags += listOf("-std=c++17")
             }
         }
@@ -33,6 +39,11 @@ android {
             // Firma release: configurar vía variables de entorno, nunca en el repo
         }
     }
+
+    sourceSets["main"].java.srcDirs(
+        // Capa Java oficial de SDL2 (org.libsdl.app) desde el submódulo, sin copiarla
+        "../../third_party/SDL2/android-project/app/src/main/java",
+    )
 
     androidResources {
         // .kpf (ZIP) y .ogg ya están comprimidos: sin recompresión el motor puede abrirlos
