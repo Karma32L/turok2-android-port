@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "atmosphere.hpp"
+#include "audio/audio_sdl.hpp"
+#include "ksnd.hpp"
 #include "input/input_sdl.hpp"
 #include "kfont.hpp"
 #include "level_actors.hpp"
@@ -47,7 +49,12 @@ public:
     void update(float dt, const std::vector<SDL_GameController*>& controllers);
     void draw(int viewportW, int viewportH);
 
+    // Salida de SFX del nivel (nullptr = en silencio). Debe vivir más que la escena.
+    void setAudio(audio::AudioDevice* dev) { audio_ = dev; }
+
 private:
+    void loadSounds(const vfs::Vfs& fs);
+    void playSound(std::uint32_t id);
     bool initGl(const vfs::Vfs& fs);
     void initHudGl(const vfs::Vfs& fs);
     void loadActors(const vfs::Vfs& fs);
@@ -81,6 +88,8 @@ private:
     std::optional<game::WeaponView> weapon_;
     std::vector<render3d::BoneMatrix> palette_;  // reutilizada entre llamadas
     int health_ = 100;
+    audio::AudioDevice* audio_ = nullptr;
+    std::optional<audio::SoundBank> sounds_;  // ids de sounds/shaders/*.ksnd → PCM (perezoso)
     std::optional<render::gl::SpriteBatch> hud_;  // optional: se destruye/recrea con el contexto
     render::gl::Texture disc_, ring_, exitIcon_, jumpIcon_, crouchIcon_, flyIcon_, fireIcon_;
     render::gl::Texture healthIcon_, ammoIcon_, weaponIcon_, numbersAtlas_;

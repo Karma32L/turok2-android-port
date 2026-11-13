@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <string>
 
 #include "input/input_sdl.hpp"
@@ -31,6 +32,24 @@ constexpr render3d::Vec3 kWeaponOffset{9.0f, -10.0f, -12.0f};
 constexpr float kWeaponFovY = 1.2217305f;  // 70°, fijo: no depende del FOV del mundo
 constexpr float kWeaponNear = 1.0f, kWeaponFar = 200.0f;
 constexpr float kGroundSearch = 128.0f;    // al apoyar actores: margen sobre su z para buscar suelo
+
+// Shaders de sonido del combate de Port_of_Adia_1 (ids en los eventos de .anim, scripts y
+// partículas; ver docs/FORMATS.md). Lista fija: varios .ksnd de otros enemigos reutilizan ids.
+constexpr const char* kSoundShaders[] = {
+    "sounds/shaders/Arrow Pull Back.ksnd",        // 408: tensar el arco
+    "sounds/shaders/Arrow Release.ksnd",          // 410: soltar la flecha
+    "sounds/shaders/Arrow Fly.ksnd",              // 412: vuelo (spawnSound de Arrow.particle)
+    "sounds/shaders/Arrow Impact Flesh 1.ksnd",   // 510: impacto en carne
+    "sounds/shaders/Arrow Impact Hard 1.ksnd",    // 512: impacto duro (3 variantes)
+    "sounds/shaders/Arrow Impact Hard 2.ksnd",
+    "sounds/shaders/Arrow Impact Hard 3.ksnd",
+    "sounds/shaders/Explosion Medium 1.ksnd",     // 453: triggerSound del barril
+    "sounds/shaders/Endtrail Alert.ksnd",         // 610
+    "sounds/shaders/Endtrail Attack.ksnd",        // 611
+    "sounds/shaders/Endtrail Death.ksnd",         // 612
+    "sounds/shaders/Endtrail Attack 2a.ksnd",     // 616
+    "sounds/shaders/Endtrail Attack 2b.ksnd",     // 617
+};
 
 constexpr const char* kNumbersFont = "fonts/numbers.kfont";
 constexpr const char* kHealthIcon = "gfx/hud/h_health.png";
@@ -178,6 +197,24 @@ void WorldScene::loadActors(const vfs::Vfs& fs) {
          actors_->materials.size(), st.materialsMissing, actors_->markers.size());
 }
 
+void WorldScene::loadSounds(const vfs::Vfs& fs) {
+    // El lector copia el puntero al VFS: la escena se descarga antes de que main() lo destruya
+    const vfs::Vfs* vfs = &fs;
+    sounds_.emplace([vfs](const std::string& p) { return vfs->read(p); });
+    std::size_t ok = 0;
+    for (const char* path : kSoundShaders) {
+        std::string err;
+        if (sounds_->addShader(path, &err)) ++ok;
+        else LOGE("WORLD: sonido %s", err.c_str());
+    }
+    LOGI("WORLD: %zu/%zu shaders de sonido (%zu ids)", ok, std::size(kSoundShaders), sounds_->size());
+}
+
+void WorldScene::playSound(std::uint32_t id) {
+    if (!audio_ || !sounds_ || id == 0) return;
+    if (auto pcm = sounds_->get(id)) audio_->playSfx(std::move(pcm));
+}
+
 void WorldScene::loadWeapon(const vfs::Vfs& fs) {
     render3d::MapActor bow;
     bow.skinnedMesh = kWeaponMesh;
@@ -282,6 +319,7 @@ bool WorldScene::load(const vfs::Vfs& fs) {
 
     loadActors(fs);
     loadWeapon(fs);
+    loadSounds(fs);
     health_ = 100;
 
     if (!initGl(fs)) {
@@ -319,6 +357,7 @@ void WorldScene::unload() {
     weapon_.reset();  // antes que weaponModel_, a cuyas animaciones apunta
     weaponModel_.reset();
     actors_.reset();
+    sounds_.reset();
     numbers_.reset();
     player_.reset();  // antes que world_, al que apunta
     world_.reset();
