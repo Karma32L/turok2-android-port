@@ -34,6 +34,12 @@ android {
         }
     }
 
+    androidResources {
+        // .kpf (ZIP) y .ogg ya están comprimidos: sin recompresión el motor puede abrirlos
+        // por offset con AAssetManager (solo aplica a builds locales con assets/game_data/)
+        noCompress += listOf("kpf", "ogg")
+    }
+
     externalNativeBuild {
         cmake {
             path = file("../../src/CMakeLists.txt")

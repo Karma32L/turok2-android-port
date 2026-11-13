@@ -16,12 +16,19 @@ Entorno de desarrollo: Ubuntu Linux. SDK en `~/Android/Sdk` (ruta definida en `l
 - Verificar ABIs del APK: `unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep lib/`
 - Instalar en dispositivo: `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`
 - Logs nativos: `adb logcat -s turok2:*`
+- Pruebas (stdlib, datos sintéticos): `python3 -m unittest discover -s tests -v`
+- Preparar assets: `python3 tools/prepare_assets.py {detect|inspect|install --mode adb|local|extract}`
 
 # Regla de Assets (ESTRICTA — sin excepciones)
 **CERO assets con copyright en Git.** Prohibido versionar archivos de datos del juego original:
 `.kpf`, `.exe`, `.dll`, `.z64` ni ningún otro binario, textura, audio, modelo o nivel extraído.
-- El usuario aporta sus propios datos legítimos en tiempo de ejecución (almacenamiento de la app), nunca dentro del APK ni del repo.
-- Nunca empaquetes datos del juego en `assets/` o `res/`.
+- El usuario aporta sus propios datos legítimos con `tools/prepare_assets.py`.
+- Vía recomendada: `install --mode adb`, que copia al almacenamiento externo de la app (`/sdcard/Android/data/com.turok2port.app/files/game_data/`) y deja el APK limpio.
+- `android/app/src/main/assets/game_data/` (`install --mode local`) existe **solo para builds locales personales**:
+  - está en `.gitignore` (solo se versiona `.gitkeep`);
+  - **nunca** se sube a Git, GitHub Releases, CI ni ningún otro canal;
+  - un APK compilado con esos datos no se distribuye jamás.
+- Nunca empaquetes datos del juego en `res/` ni en ninguna otra ruta versionada.
 - Antes de cada commit, revisa `git status` y `git diff --cached --stat`; si aparece cualquier binario sospechoso, aborta.
 - Los tests deben usar datos sintéticos generados por el propio código.
 
