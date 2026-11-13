@@ -1,18 +1,26 @@
 // Validación opcional con la copia legítima del usuario (nunca versionada ni usada en CI):
 //   TURK2_KPF=/ruta/absoluta/game.kpf ctest --test-dir build-host -R render3d --output-on-failure
-// Recorre en memoria todos los .map y .staticmesh del .kpf y construye el primer nivel de la
+// Recorre en memoria todos los .map, .staticmesh, .skinnedmesh y .anim del .kpf y construye el primer nivel de la
 // campaña. Solo imprime recuentos, nunca contenido.
 #include "test.hpp"
 
+#include <anim_file.hpp>
 #include <kmat.hpp>
 #include <level_builder.hpp>
 #include <map_file.hpp>
+#include <skeleton.hpp>
+#include <skinned_mesh.hpp>
 #include <static_mesh.hpp>
 #include <vfs.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -116,4 +124,71 @@ TEST(real_kpf_mapas_y_mallas) {
                     c.areas.size(), water, c.sectors.size());
         CHECK(c.points.size() == 556 && c.areas.size() == 122 && c.sectors.size() == 824 && water == 31);
     }
+}
+
+// .skinnedmesh y .anim del .kpf: todos deben parsear y cada .anim debe casar con su malla homónima
+// (mismo número de huesos), y toda pose evaluada debe tener valores finitos.
+TEST(real_kpf_modelos_animados) {
+    const char* path = std::getenv("TURK2_KPF");
+    if (!path || !*path) {
+        std::printf("  (omitido: define TURK2_KPF con la ruta absoluta de tu game.kpf)\n");
+        return;
+    }
+    std::string err;
+    auto src = vfs::openFileSource(path, &err);
+    auto layer = src ? vfs::openZipLayer("game.kpf", std::move(src), {}, &err) : nullptr;
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    std::size_t meshes = 0, meshesOk = 0, emptyMeshes = 0, anims = 0, animsOk = 0, clips = 0, paired = 0;
+    std::size_t pairedOk = 0, maxBones = 0;
+    std::map<std::string, std::vector<std::int16_t>> parentsByName;  // ruta bajo char/ → padres
+    std::vector<std::pair<std::string, render3d::AnimSet>> animSets;
+    for (const std::string& p : layer->list()) {
+        const bool isSkin = endsWith(p, ".skinnedmesh"), isAnim = endsWith(p, ".anim");
+        if (!isSkin && !isAnim) continue;
+        auto data = layer->read(p);
+        if (!data) continue;
+        std::string why;
+        if (isSkin) {
+            ++meshes;
+            if (auto m = render3d::parseSkinnedMesh(render3d::ByteView(*data), &why)) {
+                ++meshesOk;
+                emptyMeshes += m->vertices.empty();
+                maxBones = std::max(maxBones, m->boneCount());
+                // "char/[sub/]Nombre.skinnedmesh" ↔ "anims/[sub/]Nombre.anim" (hay homónimos en mp/)
+                if (p.rfind("char/", 0) == 0) parentsByName[p.substr(5, p.size() - 5 - 12)] = m->parents;
+            } else if (meshes - meshesOk <= 3) {
+                std::printf("  %s: %s\n", p.c_str(), why.c_str());
+            }
+        } else {
+            ++anims;
+            if (auto a = render3d::parseAnimSet(render3d::ByteView(*data), &why)) {
+                ++animsOk;
+                clips += a->clips.size();
+                if (p.rfind("anims/", 0) == 0) animSets.emplace_back(p.substr(6, p.size() - 6 - 5), std::move(*a));
+            } else if (anims - animsOk <= 3) {
+                std::printf("  %s: %s\n", p.c_str(), why.c_str());
+            }
+        }
+    }
+    std::vector<render3d::BoneMatrix> pal;
+    for (const auto& [name, set] : animSets) {
+        const auto it = parentsByName.find(name);
+        if (it == parentsByName.end()) continue;
+        ++paired;
+        bool ok = true;
+        for (const auto& clip : set.clips) {
+            ok = ok && render3d::evaluatePose(clip, it->second, 0.37f, true, pal);
+            for (const auto& b : pal)
+                for (const auto& r : b.row)
+                    for (float f : r) ok = ok && std::isfinite(f);
+        }
+        pairedOk += ok;
+    }
+    std::printf("  .skinnedmesh: %zu/%zu válidas (%zu sin vértices, máx. %zu huesos); .anim: %zu/%zu válidos, %zu clips\n",
+                meshesOk, meshes, emptyMeshes, maxBones, animsOk, anims, clips);
+    std::printf("  .anim con malla homónima: %zu, poses correctas: %zu\n", paired, pairedOk);
+    CHECK(meshes > 0 && meshesOk == meshes);
+    CHECK(anims > 0 && animsOk == anims);
+    CHECK(paired > 0 && pairedOk == paired);
 }

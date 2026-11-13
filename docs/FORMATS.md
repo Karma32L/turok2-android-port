@@ -354,7 +354,7 @@ numSurfaces × {
     char material[]              terminado en NUL
     u16  idx[]                   lista de triángulos terminada en 0xFFFF
 }
-u32 numVerts                     (ausente si numSurfaces = 0: malla vacía, 18 archivos)
+u32 numVerts                     (ausente si numSurfaces = 0: 18 archivos; otros 45 tienen 0)
 numVerts × { f32 pos[3]; f32 uv[2]; f32 normal[3]; u16 hueso }   34 B por vértice
 ```
 
