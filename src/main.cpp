@@ -291,6 +291,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     bool titleOk = vfsOk && title->load(fs);
     if (vfsOk && !titleOk) LOGE("TITLE: sin pantalla de título; se mantiene el color de diagnóstico");
     std::optional<WorldScene> world(std::in_place);  // nivel 3D: se carga al entrar en InGame
+    if (audioDev.isOpen()) world->setAudio(&audioDev);  // audioDev vive hasta el final de main()
 
     // Ejecuta los efectos que pide el menú: SFX, volúmenes, idioma y guardado
     auto applyOutput = [&](const ui::MenuOutput& out) {

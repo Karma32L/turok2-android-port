@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "fly_camera.hpp"
+#include "obstacle.hpp"
 #include "sector_world.hpp"
 
 namespace physics {
@@ -60,6 +61,13 @@ public:
     void spawn(Vec3 feet, float yaw, float pitch = 0.0f);
     void update(const PlayerInput& in, float dt);
 
+    // Obstáculos dinámicos (puertas, barriles, otros cuerpos). La lista la mantiene el llamador y
+    // debe vivir más que el controlador (o desconectarse con nullptr); se ignoran los de `self`.
+    void setObstacles(const std::vector<Obstacle>* obstacles, int self = kObstaclePlayer) {
+        obstacles_ = obstacles;
+        self_ = self;
+    }
+
     // Cambiar a Fly siempre funciona; volver de Fly exige un sector bajo la cámara.
     bool setFly(bool fly);
     MoveMode mode() const { return mode_; }
@@ -86,6 +94,7 @@ private:
     // Movimiento horizontal con deslizamiento y separación de paredes; devuelve el desplazamiento real
     Vec2 moveHorizontal(Vec2 delta);
     void pushOutOfWalls();
+    void pushOutOfObstacles();
     bool passable(int from, int to, Vec2 at) const;
     void groundCheck();
     void updateWaterMode();
@@ -102,6 +111,8 @@ private:
     int sector_ = kNoSector;
     bool onGround_ = false, crouched_ = false;
     std::vector<int> scratch_, visited_;
+    const std::vector<Obstacle>* obstacles_ = nullptr;
+    int self_ = kObstaclePlayer;
 };
 
 }  // namespace physics

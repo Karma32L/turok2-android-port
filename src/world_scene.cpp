@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <string>
 
 #include "input/input_sdl.hpp"
@@ -30,7 +31,34 @@ constexpr float kWeaponScale = 0.01f;
 constexpr render3d::Vec3 kWeaponOffset{9.0f, -10.0f, -12.0f};
 constexpr float kWeaponFovY = 1.2217305f;  // 70°, fijo: no depende del FOV del mundo
 constexpr float kWeaponNear = 1.0f, kWeaponFar = 200.0f;
-constexpr float kGroundSearch = 128.0f;    // al apoyar actores: margen sobre su z para buscar suelo
+constexpr float kGroundSearch = 128.0f;
+// Flecha: malla de particles/Arrow.particle (eje largo Z, de −50 a 74). Se dibuja a escala 0,5
+// (~62 u) con +Z hacia delante: la orientación de la punta es una suposición a revisar en el
+// dispositivo. Sale de la cámara un poco por delante y por debajo de la mira.
+constexpr const char* kArrowMesh = "models/model0036.staticmesh";
+constexpr float kArrowScale = 0.5f;
+constexpr float kArrowForward = 16.0f, kArrowDrop = 4.0f;
+constexpr std::uint32_t kSfxArrowFly = 412;      // spawnSound de Arrow.particle
+constexpr std::uint32_t kSfxArrowFlesh = 510;    // onImpact flesh
+constexpr std::uint32_t kSfxArrowHard = 512;     // onImpact default/metal/stone    // al apoyar actores: margen sobre su z para buscar suelo
+
+// Shaders de sonido del combate de Port_of_Adia_1 (ids en los eventos de .anim, scripts y
+// partículas; ver docs/FORMATS.md). Lista fija: varios .ksnd de otros enemigos reutilizan ids.
+constexpr const char* kSoundShaders[] = {
+    "sounds/shaders/Arrow Pull Back.ksnd",        // 408: tensar el arco
+    "sounds/shaders/Arrow Release.ksnd",          // 410: soltar la flecha
+    "sounds/shaders/Arrow Fly.ksnd",              // 412: vuelo (spawnSound de Arrow.particle)
+    "sounds/shaders/Arrow Impact Flesh 1.ksnd",   // 510: impacto en carne
+    "sounds/shaders/Arrow Impact Hard 1.ksnd",    // 512: impacto duro (3 variantes)
+    "sounds/shaders/Arrow Impact Hard 2.ksnd",
+    "sounds/shaders/Arrow Impact Hard 3.ksnd",
+    "sounds/shaders/Explosion Medium 1.ksnd",     // 453: triggerSound del barril
+    "sounds/shaders/Endtrail Alert.ksnd",         // 610
+    "sounds/shaders/Endtrail Attack.ksnd",        // 611
+    "sounds/shaders/Endtrail Death.ksnd",         // 612
+    "sounds/shaders/Endtrail Attack 2a.ksnd",     // 616
+    "sounds/shaders/Endtrail Attack 2b.ksnd",     // 617
+};
 
 constexpr const char* kNumbersFont = "fonts/numbers.kfont";
 constexpr const char* kHealthIcon = "gfx/hud/h_health.png";
@@ -178,6 +206,40 @@ void WorldScene::loadActors(const vfs::Vfs& fs) {
          actors_->materials.size(), st.materialsMissing, actors_->markers.size());
 }
 
+void WorldScene::loadLogic() {
+    if (!actors_) return;
+    std::vector<std::string> log;
+    logic_.emplace(geo_->actors, *actors_, world_ ? &*world_ : nullptr, combat::LogicTuning{}, &log);
+    for (const std::string& l : log) LOGI("WORLD: lógica: %s", l.c_str());
+}
+
+void WorldScene::applyLogic(const combat::LogicOutput& out) {
+    for (const std::string& l : out.log) LOGI("WORLD: %s", l.c_str());
+    for (std::uint32_t id : out.sounds) playSound(id);
+    if (out.playerDamage > 0) {
+        health_ = std::max(health_ - out.playerDamage, 0);
+        LOGI("WORLD: el jugador recibe %d de daño (vida %d)", out.playerDamage, health_);
+    }
+}
+
+void WorldScene::loadSounds(const vfs::Vfs& fs) {
+    // El lector copia el puntero al VFS: la escena se descarga antes de que main() lo destruya
+    const vfs::Vfs* vfs = &fs;
+    sounds_.emplace([vfs](const std::string& p) { return vfs->read(p); });
+    std::size_t ok = 0;
+    for (const char* path : kSoundShaders) {
+        std::string err;
+        if (sounds_->addShader(path, &err)) ++ok;
+        else LOGE("WORLD: sonido %s", err.c_str());
+    }
+    LOGI("WORLD: %zu/%zu shaders de sonido (%zu ids)", ok, std::size(kSoundShaders), sounds_->size());
+}
+
+void WorldScene::playSound(std::uint32_t id) {
+    if (!audio_ || !sounds_ || id == 0) return;
+    if (auto pcm = sounds_->get(id)) audio_->playSfx(std::move(pcm));
+}
+
 void WorldScene::loadWeapon(const vfs::Vfs& fs) {
     render3d::MapActor bow;
     bow.skinnedMesh = kWeaponMesh;
@@ -194,6 +256,16 @@ void WorldScene::loadWeapon(const vfs::Vfs& fs) {
     weapon_.emplace(&*weaponModel_->models[0].anims, kWeaponAmmo);
     LOGI("WORLD: arma %s: %zu huesos, %zu clips", kWeaponMesh, weaponModel_->models[0].mesh.boneCount(),
          weaponModel_->models[0].anims->clips.size());
+}
+
+void WorldScene::loadArrow(const vfs::Vfs& fs) {
+    render3d::MapActor arrow;
+    arrow.staticMesh = vfs::normalizePath(kArrowMesh).value_or(kArrowMesh);
+    arrowModel_ = render3d::buildActors(fs, {arrow}, &logBuild);
+    if (arrowModel_->models.empty()) {
+        LOGE("WORLD: modelo de flecha %s no disponible: las flechas no se dibujan", kArrowMesh);
+        arrowModel_.reset();
+    }
 }
 
 void WorldScene::initHudGl(const vfs::Vfs& fs) {
@@ -233,6 +305,7 @@ bool WorldScene::initGl(const vfs::Vfs& fs) {
     // Actores y arma: no son fatales (el nivel se juega sin ellos)
     if (actors_ && !actorRenderer_.init(*actors_, fs, &err)) LOGE("WORLD: actores: %s", err.c_str());
     if (weaponModel_ && !weaponRenderer_.init(*weaponModel_, fs, &err)) LOGE("WORLD: arma: %s", err.c_str());
+    if (arrowModel_ && !arrowRenderer_.init(*arrowModel_, fs, &err)) LOGE("WORLD: flecha: %s", err.c_str());
     LOGI("WORLD: texturas de actores %zu (%zu fallidas), de arma %zu (%zu fallidas)", actorRenderer_.texturesLoaded(),
          actorRenderer_.texturesFailed(), weaponRenderer_.texturesLoaded(), weaponRenderer_.texturesFailed());
     hud_.emplace();
@@ -281,7 +354,11 @@ bool WorldScene::load(const vfs::Vfs& fs) {
     }
 
     loadActors(fs);
+    loadLogic();
     loadWeapon(fs);
+    loadArrow(fs);
+    loadSounds(fs);
+    arrows_ = combat::Projectiles{};
     health_ = 100;
 
     if (!initGl(fs)) {
@@ -291,6 +368,7 @@ bool WorldScene::load(const vfs::Vfs& fs) {
 
     // Jugador: en el inicio del .map o, si no hay, en vuelo sobre el centro del nivel
     player_.emplace(world_ ? &*world_ : nullptr);
+    if (logic_) player_->setObstacles(&logic_->obstacles());  // puertas cerradas, barriles, enemigos
     if (geo_->start) {
         const render3d::Vec3 p = geo_->start->pos;
         // El yaw del actor usa la convención del .map, Rz(-r0): en la cámara es -r0
@@ -316,11 +394,16 @@ void WorldScene::unload() {
     sky_.release();
     actorRenderer_.release();
     weaponRenderer_.release();
+    arrowRenderer_.release();
+    arrowModel_.reset();
+    arrows_ = combat::Projectiles{};
     weapon_.reset();  // antes que weaponModel_, a cuyas animaciones apunta
     weaponModel_.reset();
+    player_.reset();  // antes que world_ y logic_, a los que apunta
+    logic_.reset();   // antes que actors_ y world_
     actors_.reset();
+    sounds_.reset();
     numbers_.reset();
-    player_.reset();  // antes que world_, al que apunta
     world_.reset();
     hud_.reset();
     disc_ = {};
@@ -343,6 +426,7 @@ void WorldScene::abandonGl() {
     sky_.abandon();
     actorRenderer_.abandon();
     weaponRenderer_.abandon();
+    arrowRenderer_.abandon();
     if (hud_) hud_->abandon();
     hud_.reset();
     disc_.abandon();
@@ -402,8 +486,20 @@ void WorldScene::update(float dt, const std::vector<SDL_GameController*>& contro
     in.pitchDelta = -touchLook.y * lookScale - pad.look.y * kPadLookRate * padDt;
     in.fast = pad.fast;
     player.update(in, dt);
-    if (actors_) actors_->update(dt);
+    if (logic_) {
+        logicOut_ = {};
+        combat::PlayerState ps;
+        ps.feet = player.feet();
+        ps.radius = player.tuning().radius;
+        ps.height = player.tuning().standHeight;
+        ps.alive = player.mode() != physics::MoveMode::Fly && health_ > 0;
+        logic_->update(dt, ps, logicOut_);
+        applyLogic(logicOut_);
+    } else if (actors_) {
+        actors_->update(dt);
+    }
     updateWeapon(act, in, padDt);
+    updateArrows(dt);
 
     if (player.mode() != lastMode_ || player.areaIndex() != lastArea_) {
         LOGI("WORLD: %s, área %d, (%.0f, %.0f, %.0f)", modeName(player.mode()), player.areaIndex(), player.feet().x,
@@ -427,9 +523,39 @@ void WorldScene::updateWeapon(const input::PadActions& act, const physics::Playe
     w.fireHeld = (padFire || sticks_.held(input::Button::Fire)) && p.mode() != physics::MoveMode::Swim;
     w.yawRate = in.yawDelta / dt;
     w.pitchRate = in.pitchDelta / dt;
-    const int before = weapon_->ammo();
     weapon_->update(w, dt);
-    if (weapon_->firedThisUpdate()) LOGI("WORLD: flecha disparada (%d → %d)", before, weapon_->ammo());
+    // Eventos de los clips del arco: SFX de tensar/soltar y WEAPON_FIRE_PROJECTILE
+    for (const render3d::AnimEvent* e : weapon_->events()) {
+        if (e->type == render3d::kEvPlaySfx || e->type == render3d::kEvSfxOnModel) playSound(e->soundId());
+        else if (e->type == render3d::kEvFireProjectile) fireArrow();
+    }
+}
+
+void WorldScene::fireArrow() {
+    const physics::PlayerController& p = *player_;
+    const render3d::Vec3 dir = render3d::viewForward(p.yaw(), p.pitch());
+    const render3d::Vec3 origin = p.eye() + dir * kArrowForward - render3d::Vec3{0, 0, kArrowDrop};
+    arrows_.fire(origin, dir, weapon_->lastCharge(), world_ ? &*world_ : nullptr);
+    playSound(kSfxArrowFly);
+    LOGI("WORLD: flecha disparada (carga %.2f s, quedan %d)", weapon_->lastCharge(), weapon_->ammo());
+}
+
+void WorldScene::updateArrows(float dt) {
+    static const std::vector<combat::Target> kNoTargets;
+    static const std::vector<physics::Obstacle> kNoObstacles;
+    hits_.clear();
+    arrows_.update(dt, world_ ? &*world_ : nullptr, logic_ ? logic_->targets() : kNoTargets,
+                   logic_ ? logic_->obstacles() : kNoObstacles, hits_);
+    if (hits_.empty()) return;
+    logicOut_ = {};
+    for (const combat::ProjectileHit& h : hits_) {
+        combat::HitKind kind = combat::HitKind::Hard;
+        if (h.target && logic_) kind = logic_->damage(h.id, combat::kArrowDamage, logicOut_);
+        if (kind != combat::HitKind::None) playSound(kind == combat::HitKind::Flesh ? kSfxArrowFlesh : kSfxArrowHard);
+        LOGI("WORLD: impacto de flecha en %s (%.0f, %.0f, %.0f)", h.target ? "objetivo" : "el mundo", h.point.x,
+             h.point.y, h.point.z);
+    }
+    applyLogic(logicOut_);
 }
 
 render3d::Fog WorldScene::targetFog() {
@@ -462,6 +588,7 @@ void WorldScene::draw(int viewportW, int viewportH) {
     if (!underwater_) sky_.draw(vp, eye, time_, fog_);  // bajo el agua no se ve el cielo
     renderer_.draw(vp, eye, fog_);
     drawActors(vp, eye);
+    drawArrows();
     drawWeapon(eye);
     drawHud();
 }
@@ -470,10 +597,41 @@ void WorldScene::drawActors(const render3d::Mat4& vp, render3d::Vec3 eye) {
     if (!actors_ || !actorRenderer_.ready()) return;
     actorRenderer_.begin(vp, eye, fog_);
     for (const render3d::ActorInstance& a : actors_->instances) {
+        if (!a.visible) continue;
         actors_->palette(a, palette_);
         actorRenderer_.drawModel(a.model, actors_->modelMatrix(a), palette_);
     }
     actorRenderer_.end();
+}
+
+// Flechas con la misma vista que los actores (drawActors deja el renderer de actores terminado).
+// Base: eje largo del modelo (+Z) → velocidad; los otros dos ejes, perpendiculares (dextrógira).
+void WorldScene::drawArrows() {
+    if (!arrowModel_ || !arrowRenderer_.ready() || arrows_.arrows().empty() || !player_) return;
+    const float aspect = viewW_ / viewH_;
+    const render3d::Mat4 vp = render3d::mul(render3d::perspective(kFovY, aspect, kNear, kFar), player_->view());
+    render3d::identityPose(1, palette_);
+    arrowRenderer_.begin(vp, player_->eye(), fog_);
+    for (const combat::Arrow& a : arrows_.arrows()) {
+        const float speed = render3d::length(a.vel);
+        if (!(speed > 1e-3f)) continue;
+        const render3d::Vec3 f = a.vel * (1.0f / speed);
+        const render3d::Vec3 up = std::fabs(f.z) > 0.99f ? render3d::Vec3{1, 0, 0} : render3d::Vec3{0, 0, 1};
+        const render3d::Vec3 x = render3d::normalize(render3d::cross(up, f));
+        const render3d::Vec3 y = render3d::cross(f, x);  // x × y = f
+        render3d::Mat4 m;
+        const render3d::Vec3 cols[3] = {x * kArrowScale, y * kArrowScale, f * kArrowScale};
+        for (int c = 0; c < 3; ++c) {
+            m.at(0, c) = cols[c].x;
+            m.at(1, c) = cols[c].y;
+            m.at(2, c) = cols[c].z;
+        }
+        m.at(0, 3) = a.pos.x;
+        m.at(1, 3) = a.pos.y;
+        m.at(2, 3) = a.pos.z;
+        arrowRenderer_.drawModel(0, m, palette_);
+    }
+    arrowRenderer_.end();
 }
 
 void WorldScene::drawWeapon(render3d::Vec3 eye) {

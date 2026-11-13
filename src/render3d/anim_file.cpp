@@ -1,5 +1,6 @@
 #include "anim_file.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace render3d {
@@ -47,6 +48,26 @@ bool validTracks(const std::vector<std::uint16_t>& table, std::uint32_t numTrack
 }
 
 }  // namespace
+
+void collectEvents(const AnimClip& clip, float t0, float dt, bool loop, std::vector<const AnimEvent*>& out) {
+    if (!std::isfinite(dt) || dt <= 0.0f || !std::isfinite(t0) || clip.events.empty()) return;
+    const float dur = clip.duration();
+    t0 = std::max(t0, 0.0f);
+    auto range = [&](float a, float b) {
+        for (const AnimEvent& ev : clip.events) {
+            const float t = static_cast<float>(ev.frame) / clip.fps;
+            if (t >= a && t < b) out.push_back(&ev);
+        }
+    };
+    if (!loop) {
+        if (t0 < dur) range(t0, std::min(t0 + dt, dur));
+        return;
+    }
+    t0 = std::fmod(t0, dur);
+    const float t1 = t0 + std::min(dt, dur);  // como mucho una vuelta
+    range(t0, std::min(t1, dur));
+    if (t1 > dur) range(0.0f, t1 - dur);
+}
 
 const AnimClip* AnimSet::find(std::uint32_t id) const {
     for (const AnimClip& c : clips)
@@ -114,7 +135,21 @@ std::optional<AnimSet> parseAnimSet(ByteView bytes, std::string* err, const Anim
         clip.rots.resize(std::size_t{numRot} * clip.frames);
         for (Quat& q : clip.rots)
             if (!readQuat(c, q)) return fail(err, where + "rotación inválida");
-        c.take(std::size_t{numEvents} * kEvent, skip);  // eventos: sin interpretar
+        clip.events.resize(numEvents);
+        for (AnimEvent& ev : clip.events) {
+            ByteView e, skipPos;
+            c.take(kEvent, e);  // no puede fallar: el tamaño ya se comprobó
+            Cursor ec(e);
+            ec.u16(ev.frame);
+            ec.u16(ev.type);
+            ec.take(2 + 12, skipPos);  // hueso y posición: sin usar
+            for (float& p : ev.params) {
+                ByteView raw;
+                ec.take(4, raw);
+                float v = 0.0f;
+                p = raw.f32At(0, v) && std::isfinite(v) ? v : 0.0f;
+            }
+        }
     }
     if (c.remaining() != 0) return fail(err, "bytes sobrantes al final");
     return set;

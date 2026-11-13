@@ -163,3 +163,53 @@ TEST(anim_cuaternion_enorme_se_rechaza) {
     const render3d::Quat q = render3d::normalize(render3d::Quat{1.0e30f, 1.0e30f, 0, 0});
     CHECK(q.w == 1.0f && q.x == 0.0f);  // identidad, nunca nulo
 }
+
+TEST(anim_eventos_se_leen_y_filtran_no_finitos) {
+    sb::Clip c = animatedClip();
+    c.events = {{2, render3d::kEvPlaySfx, {408, 0, 0, 0, 0, 0, 0, 0}},
+                {0, render3d::kEvFireProjectile, {86, std::numeric_limits<float>::quiet_NaN(), 0, 0, 0, 0, 0,
+                                                  std::numeric_limits<float>::infinity()}}};
+    const auto set = parseAnimSet(ByteView(sb::anim({c})));
+    CHECK(set.has_value());
+    if (!set) return;
+    const auto& ev = set->clips[0].events;
+    CHECK(ev.size() == 2);
+    if (ev.size() != 2) return;
+    CHECK(ev[0].frame == 2 && ev[0].type == render3d::kEvPlaySfx && ev[0].soundId() == 408);
+    CHECK(ev[1].type == render3d::kEvFireProjectile && ev[1].params[0] == 86.0f);
+    CHECK(ev[1].params[1] == 0.0f && ev[1].params[7] == 0.0f);  // NaN e Inf → 0
+    render3d::AnimEvent neg;
+    neg.params[0] = -5.0f;
+    CHECK(neg.soundId() == 0);
+}
+
+TEST(anim_eventos_por_intervalo_con_y_sin_bucle) {
+    // 3 frames a 15 fps (0,2 s): eventos en t = 0, 0,0667 y 0,1333
+    sb::Clip c = animatedClip();
+    c.events = {{0, 0, {1}}, {1, 0, {2}}, {2, 0, {3}}};
+    const auto set = parseAnimSet(ByteView(sb::anim({c})));
+    CHECK(set.has_value());
+    if (!set) return;
+    const render3d::AnimClip& clip = set->clips[0];
+    std::vector<const render3d::AnimEvent*> out;
+    auto ids = [&]() {
+        std::uint32_t mask = 0;
+        for (const auto* e : out) mask |= 1u << e->soundId();
+        out.clear();
+        return mask;
+    };
+    render3d::collectEvents(clip, 0.0f, 0.05f, false, out);
+    CHECK(ids() == (1u << 1));  // [0, 0,05): el del frame 0 incluido
+    render3d::collectEvents(clip, 0.05f, 1.0f, false, out);
+    CHECK(ids() == ((1u << 2) | (1u << 3)));  // sin bucle se corta en la duración
+    render3d::collectEvents(clip, 0.2f, 1.0f, false, out);
+    CHECK(ids() == 0);  // terminado: nada
+    render3d::collectEvents(clip, 0.15f, 0.1f, true, out);
+    CHECK(ids() == (1u << 1));  // [0,15, 0,2) ∪ [0, 0,05): da la vuelta (el de 0,133 queda antes)
+    render3d::collectEvents(clip, 0.0f, 100.0f, true, out);
+    CHECK(ids() == ((1u << 1) | (1u << 2) | (1u << 3)));  // como mucho una vuelta: cada uno una vez
+    render3d::collectEvents(clip, 0.0f, std::numeric_limits<float>::quiet_NaN(), true, out);
+    render3d::collectEvents(clip, std::numeric_limits<float>::infinity(), 0.1f, true, out);
+    render3d::collectEvents(clip, 0.0f, -1.0f, false, out);
+    CHECK(out.empty());
+}

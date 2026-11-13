@@ -232,3 +232,45 @@ TEST(jugador_sin_colision_solo_vuela) {
     run(p, forward(), 0.5f);
     CHECK(p.eye().x > 0.0f);
 }
+
+TEST(jugador_choca_con_obstaculos_y_no_con_el_suyo) {
+    const auto w = corridor(10, [](int) { return cb::Tile{}; });
+    // Puerta fina atravesando el pasillo en x = 500, de z 0 a 200
+    std::vector<Obstacle> obs(1);
+    obs[0].a = {500, -50};
+    obs[0].b = {500, 150};
+    obs[0].radius = 4.0f;
+    obs[0].zMin = 0.0f;
+    obs[0].zMax = 200.0f;
+    PlayerController p(&w);
+    p.setObstacles(&obs);
+    p.spawn({150, 50, 0}, 0.0f);
+    run(p, forward(), 3.0f);  // 480 u/s: sin la puerta llegaría al final
+    CHECK(p.feet().x < 500.0f - 4.0f - p.tuning().radius + 0.5f && p.feet().x > 400.0f);
+    CHECK(p.sector() != kNoSector);
+    // Obstáculo propio (owner = el del controlador): no le afecta
+    obs[0].owner = kObstaclePlayer;
+    run(p, forward(), 3.0f);
+    CHECK(p.feet().x > 600.0f);
+    // Fuera de su rango de alturas tampoco
+    obs[0].owner = kObstacleStatic;
+    obs[0].zMin = 500.0f;
+    obs[0].zMax = 600.0f;
+    p.spawn({150, 50, 0}, 0.0f);
+    run(p, forward(), 3.0f);
+    CHECK(p.feet().x > 600.0f);
+    // Un círculo (enemigo) en medio: lo rodea o se detiene, pero nunca lo atraviesa
+    obs[0].a = obs[0].b = {500, 50};
+    obs[0].radius = 41.0f;
+    obs[0].zMin = 0.0f;
+    obs[0].zMax = 123.0f;
+    p.spawn({150, 50, 0}, 0.0f);
+    for (int i = 0; i < 180; ++i) {
+        p.update(forward(), 1.0f / 60.0f);
+        const float dx = p.feet().x - 500.0f, dy = p.feet().y - 50.0f;
+        CHECK(std::sqrt(dx * dx + dy * dy) >= 41.0f + p.tuning().radius - 0.5f);
+    }
+    p.setObstacles(nullptr);
+    run(p, forward(), 2.0f);
+    CHECK(p.feet().x > 600.0f);
+}

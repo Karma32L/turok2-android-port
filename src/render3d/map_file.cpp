@@ -188,10 +188,52 @@ bool usedComponent(std::string_view name) {
            name == "kexEnemyAIComponent";
 }
 
+// Componentes de los que solo se guardan las claves de kActorPropKeys (sin límite de pares: los
+// scripts tienen cientos, pero el contenedor ya está acotado por kex::kMaxChildren)
+bool propsComponent(std::string_view name) {
+    return name == "kexScriptComponent" || name == "kexEnemyAIComponent" || name == "kexEventLinkComponent";
+}
+
+bool keptProp(std::string_view key) {
+    for (std::string_view k : kActorPropKeys)
+        if (k == key) return true;
+    return false;
+}
+
+bool blank(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+// Valor de una propiedad: cadena terminada en NUL de como mucho maxLen bytes, ASCII imprimible o
+// espacio en blanco (en algunos mapas los valores de kexScriptComponent terminan en '\n'), sin
+// espacios alrededor. nullopt si es más larga, no tiene NUL o lleva otros bytes de control.
+std::optional<std::string> propValue(ByteView node, std::size_t maxLen) {
+    const auto leaf = kex::asLeaf(node);
+    if (!leaf || leaf->count != 1 || leaf->stride == 0) return std::nullopt;
+    const ByteView d = leaf->data;
+    std::size_t n = 0;
+    for (; n < d.size && d.data[n] != 0; ++n) {
+        const char c = static_cast<char>(d.data[n]);
+        if (n > maxLen + 8 || ((c < 0x20 || c >= 0x7F) && !blank(c))) return std::nullopt;
+    }
+    if (n == d.size) return std::nullopt;  // sin NUL
+    std::string_view v(reinterpret_cast<const char*>(d.data), n);
+    while (!v.empty() && blank(v.back())) v.remove_suffix(1);
+    while (!v.empty() && blank(v.front())) v.remove_prefix(1);
+    if (v.size() > maxLen) return std::nullopt;
+    return std::string(v);
+}
+
+void collectProps(const std::vector<ByteView>& kv, const MapLimits& l, MapActor& a) {
+    for (std::size_t i = 0; i + 1 < kv.size(); i += 2) {
+        const auto key = kex::leafString(kv[i]);
+        if (!key || !keptProp(*key)) continue;
+        if (auto v = propValue(kv[i + 1], l.maxPropValue)) a.props.kv.emplace_back(*key, std::move(*v));
+    }
+}
+
 // Aplica las claves que usa el port de un componente {nombre, [clave, valor, …]}.
 // false si la estructura es inválida (el actor se omite). Solo se leen las cadenas de los
-// componentes que se usan: los demás (p. ej. kexScriptComponent, con valores terminados en
-// '\n' y cientos de pares) no se interpretan. Un valor ilegible o fuera de rango se ignora.
+// componentes que se usan; de los de lógica (script, IA, EventLink) solo las claves de
+// kActorPropKeys. Un valor ilegible o fuera de rango se ignora.
 bool applyComponent(ByteView comp, const MapLimits& l, MapActor& a) {
     const auto parts = kex::asContainer(comp);
     if (!parts || parts->size() != 2) return false;
@@ -199,6 +241,8 @@ bool applyComponent(ByteView comp, const MapLimits& l, MapActor& a) {
     const auto kv = kex::asContainer((*parts)[1]);
     if (!name || !kv || kv->size() % 2 != 0) return false;
     const std::string_view compName = *name;
+    if (compName == "kexEventLinkComponent") a.eventLink = true;
+    if (propsComponent(compName)) collectProps(*kv, l, a);
     if (!usedComponent(compName)) return true;
     if (kv->size() > 2 * l.maxProperties) return false;
     if (compName == "kexEnemyAIComponent") a.enemy = true;
@@ -215,9 +259,13 @@ bool applyComponent(ByteView comp, const MapLimits& l, MapActor& a) {
         } else if (compName == "kexWorldComponent") {
             if (k == "bTrackGround") {
                 a.trackGround = v == "1";
-            } else if (k == "heightOffset") {
+            } else if (k == "heightOffset" || k == "radius" || k == "height") {
                 const auto f = render::text::parseNumber(v);
-                if (f && finiteWithin(*f, l.maxCoord)) a.heightOffset = *f;
+                if (!f || !finiteWithin(*f, l.maxCoord)) continue;
+                if (k == "heightOffset") a.heightOffset = *f;
+                else if (*f >= 0.0f) (k == "radius" ? a.radius : a.height) = *f;
+            } else if (k == "bNonSolid") {
+                a.nonSolid = v == "1";
             }
         } else if (k == "startAnimID") {  // kexEnemyAIComponent
             std::uint32_t id = 0;
@@ -263,6 +311,27 @@ void parseActors(ByteView section, const MapLimits& l, MapData& map) {
 }
 
 }  // namespace
+
+std::string_view ActorProps::text(std::string_view key) const {
+    for (const auto& p : kv)
+        if (p.first == key) return p.second;
+    return {};
+}
+
+std::optional<float> ActorProps::number(std::string_view key) const {
+    const std::string_view v = text(key);
+    if (v.empty()) return std::nullopt;
+    std::int32_t i = 0;  // enteros de más de 6 cifras (flags) que parseNumber no admite
+    if (render::text::parseInt(v, i)) return static_cast<float>(i);
+    const auto f = render::text::parseNumber(v);
+    if (!f || !std::isfinite(*f) || std::fabs(*f) > 1.0e9f) return std::nullopt;
+    return f;
+}
+
+float ActorProps::number(std::string_view key, float fallback) const {
+    const auto f = number(key);
+    return f ? *f : fallback;
+}
 
 std::optional<MapData> parseMap(ByteView bytes, std::string* err, const MapLimits& limits) {
     if (bytes.size > limits.maxBytes) return fail(err, ".map demasiado grande");

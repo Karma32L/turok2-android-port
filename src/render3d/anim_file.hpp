@@ -26,6 +26,25 @@ namespace render3d {
 
 constexpr std::uint16_t kNoTrack = 0xFFFF;
 
+// Evento de un clip (50 B en disco): u16 frame | u16 tipo | i16 hueso | f32 pos[3] | f32 params[8].
+// Tipos = turokEventActions de scripts/actions.txt; los que usa el port:
+enum AnimEventType : std::uint16_t {
+    kEvPlaySfx = 0,           // params[0] = id de sonido (campo `type` de sounds/shaders/*.ksnd)
+    kEvParticle = 1,          // params[0] = id de partícula (sin implementar)
+    kEvMeleeDamage = 3,       // MDAMAGE: golpe cuerpo a cuerpo (params sin descifrar)
+    kEvFireProjectile = 11,   // params[0] = id de partícula proyectil (86 = flecha)
+    kEvRumble = 21,
+    kEvSfxOnModel = 23,       // como kEvPlaySfx, desde el modelo
+    kEvFootstepSfx = 29,      // sonido según material del suelo (sin implementar)
+};
+
+struct AnimEvent {
+    std::uint16_t frame = 0, type = 0;
+    float params[8] = {0, 0, 0, 0, 0, 0, 0, 0};  // los no finitos se guardan como 0
+
+    std::uint32_t soundId() const { return params[0] >= 0.0f && params[0] < 1.0e6f ? static_cast<std::uint32_t>(params[0]) : 0; }
+};
+
 struct AnimClip {
     std::uint32_t id = 0;  // ANIM_* de scripts/animations.txt
     std::uint32_t frames = 0;  // >= 1
@@ -35,9 +54,15 @@ struct AnimClip {
     std::vector<Quat> fixedRot;
     std::vector<Vec3> trans;  // numTrans × frames (pista p, frame f → [p * frames + f])
     std::vector<Quat> rots;   // numRot × frames
+    std::vector<AnimEvent> events;  // en el orden del archivo (no siempre ordenados por frame)
 
     float duration() const { return static_cast<float>(frames) / fps; }
 };
+
+// Eventos cuyo instante (frame / fps) cae en [t0, t0 + dt). Con bucle, el intervalo que pasa del
+// final continúa desde 0 (como mucho una vuelta); sin bucle se corta en duration(). dt <= 0 o no
+// finito: ninguno.
+void collectEvents(const AnimClip& clip, float t0, float dt, bool loop, std::vector<const AnimEvent*>& out);
 
 struct AnimSet {
     std::uint32_t bones = 0;
