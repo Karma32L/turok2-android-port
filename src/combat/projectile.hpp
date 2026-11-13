@@ -55,7 +55,8 @@ struct Arrow {
 
 // Primer t ∈ [0, 1] en que el segmento p0 → p1 entra en el cilindro (también si empieza dentro)
 std::optional<float> segmentCylinder(Vec3 p0, Vec3 p1, Vec3 base, float radius, float height);
-// Primer t ∈ [0, 1] (muestreado cada 1/8) en que el segmento toca la cápsula del obstáculo
+// t ∈ [0, 1] del punto de máximo acercamiento (XY) del segmento a la cápsula del obstáculo si la
+// toca a una altura dentro de [zMin, zMax]; exacto para cualquier longitud de segmento
 std::optional<float> segmentObstacle(Vec3 p0, Vec3 p1, const physics::Obstacle& o);
 
 class Projectiles {

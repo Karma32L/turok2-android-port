@@ -9,6 +9,9 @@
 //     son objetivo de las flechas; al llegar startHealth a 0: triggerSound, dejan de ser sólidos,
 //     desaparecen (triggerAnim <= 0, o al acabarla con VANISH) y emiten SignalOn. El mensaje 1
 //     también los destruye.
+//   - Enemigos (kexEnemyAIComponent): EnemyAI con startHealth; objetivo de las flechas (carne),
+//     obstáculo para el jugador, y el mensaje 1 los despierta. Los SFX y golpes MDAMAGE de sus
+//     clips salen de los eventos de animación.
 //   - TurokActionObject (scripts/actionObject.txt): interruptores. Se activan una vez, por mensaje 1
 //     o, con el flag AUTO_TRIGGER_PLAYER, al entrar el jugador en triggerRadius: reproducen
 //     triggerAnim y emiten SignalOn. Con VANISH_AT_END_OF_TRIG_ANIM desaparecen al acabar.
@@ -22,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "enemy_ai.hpp"
 #include "event_links.hpp"
 #include "level_actors.hpp"
 #include "map_file.hpp"
@@ -60,6 +64,7 @@ enum class HitKind { None, Hard, Flesh };  // para el sonido del impacto
 struct LogicTuning {
     float doorOpenSeconds = 1.0f;   // los clips de puerta duran 0,2 s: se ralentizan hasta esto
     float minDoorHalfThickness = 4.0f;
+    EnemyTuning enemy;
 };
 
 class LevelLogic {
@@ -87,6 +92,7 @@ public:
     std::size_t doorCount() const { return doors_.size(); }
     std::size_t actionCount() const { return actions_.size(); }
     std::size_t destructibleCount() const { return destructibles_.size(); }
+    const std::vector<EnemyAI>& enemies() const { return enemies_; }
     // ¿Hay un destructible con ese TID y sigue en pie?
     bool destructibleAlive(std::int32_t tid) const;
     std::size_t linkCount() const { return bus_.links(); }
@@ -94,7 +100,7 @@ public:
     bool doorOpen(std::int32_t tid) const;
 
 private:
-    enum class Kind { Door, Action, Destructible };
+    enum class Kind { Door, Action, Destructible, Enemy };
     struct Ref {
         std::int32_t tid = 0;
         Kind kind = Kind::Door;
@@ -133,6 +139,8 @@ private:
     void addDoor(const render3d::MapActor& a, std::size_t inst, std::vector<std::string>* log);
     void addAction(const render3d::MapActor& a, int inst);
     void addDestructible(const render3d::MapActor& a, std::size_t inst);
+    void addEnemy(const render3d::MapActor& a, std::size_t inst);
+    void updateEnemies(float dt, const PlayerState& player, LogicOutput& out);
     void deliver(const Message& m, LogicOutput& out);
     void openDoor(Door& d, LogicOutput& out);
     void closeDoor(Door& d);
@@ -145,11 +153,14 @@ private:
     void rebuildObstacles(const PlayerState& player);
 
     render3d::ActorSet& set_;
+    const physics::SectorWorld* world_;
     LogicTuning t_;
     EventBus bus_;
     std::vector<Door> doors_;
     std::vector<Action> actions_;
     std::vector<Destructible> destructibles_;
+    std::vector<EnemyAI> enemies_;
+    std::vector<AiState> lastStates_;  // para trazar los cambios de estado
     std::vector<Target> targets_;
     std::vector<Ref> targetRefs_;  // targets_[i] ↔ entidad
     std::vector<Ref> byTid_;

@@ -61,8 +61,7 @@ bool doorShape(const ActorSet& set, const ActorInstance& inst, float minHalf, Ob
 
 LevelLogic::LevelLogic(const std::vector<MapActor>& actors, ActorSet& set, const physics::SectorWorld* world,
                        LogicTuning tuning, std::vector<std::string>* log)
-    : set_(set), t_(tuning), bus_(linksFromMap(actors)) {
-    (void)world;  // la usa la IA de enemigos
+    : set_(set), world_(world), t_(tuning), bus_(linksFromMap(actors)) {
     // Actor del mapa → instancia dibujable (-1 si no tiene modelo)
     std::vector<int> instOf(actors.size(), -1);
     for (std::size_t i = 0; i < set.instances.size(); ++i) {
@@ -74,11 +73,18 @@ LevelLogic::LevelLogic(const std::vector<MapActor>& actors, ActorSet& set, const
         if (cls == "TurokDoor" && instOf[i] >= 0) addDoor(a, static_cast<std::size_t>(instOf[i]), log);
         else if (cls == "TurokActionObject") addAction(a, instOf[i]);
         else if (cls == "TurokDestructible" && instOf[i] >= 0) addDestructible(a, static_cast<std::size_t>(instOf[i]));
+        else if (a.enemy && instOf[i] >= 0) addEnemy(a, static_cast<std::size_t>(instOf[i]));
     }
     if (log) {
         log->push_back(std::to_string(bus_.links()) + " EventLinks, " + std::to_string(doors_.size()) + " puertas, " +
                        std::to_string(actions_.size()) + " interruptores, " + std::to_string(destructibles_.size()) +
-                       " destructibles");
+                       " destructibles, " + std::to_string(enemies_.size()) + " enemigos");
+        for (const EnemyAI& e : enemies_) {
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "enemigo TID %d: vida %d, cilindro %.0f×%.0f, andar %.0f u/s, correr %.0f u/s",
+                          e.tid(), e.health(), e.radius(), e.height(), e.walkSpeed(), e.runSpeed());
+            log->push_back(buf);
+        }
     }
     rebuildTargets();
     rebuildObstacles(PlayerState{{}, 0.0f, 0.0f, false});
@@ -140,6 +146,46 @@ void LevelLogic::addDestructible(const MapActor& a, std::size_t inst) {
     byTid_.push_back({d.tid, Kind::Destructible, destructibles_.size() - 1});
 }
 
+void LevelLogic::addEnemy(const MapActor& a, std::size_t inst) {
+    const int health = static_cast<int>(std::clamp(a.props.number("startHealth", 40.0f), 1.0f, 1.0e6f));
+    const float radius = a.radius > 0.0f ? a.radius : 40.96f;  // valores de la def del Endtrail
+    const float height = a.height > 0.0f ? a.height : 122.88f;
+    const int owner = static_cast<int>(enemies_.size()) + 1;  // 0 = jugador
+    enemies_.emplace_back(inst, a.tid(), health, radius, height, set_, world_, &obstacles_, owner, t_.enemy);
+    lastStates_.push_back(enemies_.back().state());
+    byTid_.push_back({a.tid(), Kind::Enemy, enemies_.size() - 1});
+}
+
+void LevelLogic::updateEnemies(float dt, const PlayerState& player, LogicOutput& out) {
+    if (enemies_.empty()) return;
+    AiContext ctx;
+    ctx.world = world_;
+    ctx.player = player.feet;
+    ctx.playerRadius = player.radius;
+    ctx.playerHeight = player.height;
+    ctx.playerAlive = player.alive;
+    ctx.obstacles = &obstacles_;
+    // Eventos de animación de los enemigos: SFX y golpes
+    for (const render3d::ClipEvent& ce : clipEvents_) {
+        for (EnemyAI& e : enemies_) {
+            if (e.instance() != ce.instance) continue;
+            const render3d::AnimEvent& ev = *ce.event;
+            if (ev.type == render3d::kEvPlaySfx || ev.type == render3d::kEvSfxOnModel) {
+                if (ev.soundId() != 0) out.sounds.push_back(ev.soundId());
+            } else {
+                e.onEvent(ev, ctx, out.playerDamage);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < enemies_.size(); ++i) {
+        enemies_[i].update(dt, ctx);
+        if (enemies_[i].state() != lastStates_[i]) {
+            lastStates_[i] = enemies_[i].state();
+            out.log.push_back("enemigo TID " + std::to_string(enemies_[i].tid()) + ": " + aiStateName(lastStates_[i]));
+        }
+    }
+}
+
 bool LevelLogic::destructibleAlive(std::int32_t tid) const {
     for (const Destructible& d : destructibles_)
         if (d.tid == tid && !d.dead) return true;
@@ -158,6 +204,14 @@ HitKind LevelLogic::damage(int targetId, int amount, LogicOutput& out) {
                           std::to_string(std::max(d.health, 0)));
         if (d.health <= 0) destroy(d, out);
         return HitKind::Hard;
+    }
+    case Kind::Enemy: {
+        EnemyAI& e = enemies_[r.index];
+        if (!e.alive()) return HitKind::None;
+        const bool died = e.damage(amount);
+        out.log.push_back("enemigo TID " + std::to_string(e.tid()) + ": " + std::to_string(amount) + " de daño, vida " +
+                          std::to_string(e.health()) + (died ? " (derrotado)" : ""));
+        return HitKind::Flesh;
     }
     case Kind::Door:
     case Kind::Action: break;
@@ -193,6 +247,12 @@ void LevelLogic::rebuildTargets() {
         targets_.push_back({set_.instances[d.inst].xf.pos, d.radius, d.height, static_cast<int>(targets_.size())});
         targetRefs_.push_back({d.tid, Kind::Destructible, i});
     }
+    for (std::size_t i = 0; i < enemies_.size(); ++i) {
+        const EnemyAI& e = enemies_[i];
+        if (!e.alive()) continue;
+        targets_.push_back({e.feet(), e.radius(), e.height(), static_cast<int>(targets_.size())});
+        targetRefs_.push_back({e.tid(), Kind::Enemy, i});
+    }
 }
 
 bool LevelLogic::doorOpen(std::int32_t tid) const {
@@ -207,6 +267,7 @@ void LevelLogic::update(float dt, const PlayerState& player, LogicOutput& out) {
     updateActions(player, out);
     clipEvents_.clear();
     set_.update(dt, &clipEvents_);
+    updateEnemies(dt, player, out);
     updateDoors();
     updateDestructibles();
     messages_.clear();
@@ -231,6 +292,9 @@ void LevelLogic::deliver(const Message& m, LogicOutput& out) {
             break;
         case Kind::Destructible:
             if (m.message == kMsgTrigger) destroy(destructibles_[r.index], out);
+            break;
+        case Kind::Enemy:
+            if (m.message == kMsgTrigger) enemies_[r.index].wake();
             break;
         }
     }
@@ -303,6 +367,18 @@ void LevelLogic::rebuildObstacles(const PlayerState& player) {
         o.radius = d.radius;
         o.zMin = p.z;
         o.zMax = p.z + d.height;
+        obstacles_.push_back(o);
+    }
+    for (std::size_t i = 0; i < enemies_.size(); ++i) {
+        const EnemyAI& e = enemies_[i];
+        if (!e.alive()) continue;
+        Obstacle o;
+        const Vec3 p = e.feet();
+        o.a = o.b = Vec2{p.x, p.y};
+        o.radius = e.radius();
+        o.zMin = p.z;
+        o.zMax = p.z + e.height();
+        o.owner = static_cast<int>(i) + 1;
         obstacles_.push_back(o);
     }
     if (player.alive) {

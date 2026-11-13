@@ -3,6 +3,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Strict.cmake)
 
 add_library(turok2_combat_core STATIC
+    enemy_ai.cpp
     event_links.cpp
     level_logic.cpp
     projectile.cpp)

@@ -47,16 +47,38 @@ std::optional<float> segmentCylinder(Vec3 p0, Vec3 p1, Vec3 base, float radius, 
 }
 
 std::optional<float> segmentObstacle(Vec3 p0, Vec3 p1, const physics::Obstacle& o) {
-    if (!finite3(p0) || !finite3(p1)) return std::nullopt;
-    constexpr int kSamples = 8;  // un paso de 1/120 s recorre < 40 u: muestras cada < 5 u
-    for (int k = 0; k <= kSamples; ++k) {
-        const float t = static_cast<float>(k) / kSamples;
-        const Vec3 p = p0 + (p1 - p0) * t;
-        if (p.z < o.zMin || p.z > o.zMax) continue;
-        const Vec2 c = physics::closestPointOnSegment2D(xy(p), o.a, o.b);
-        if (physics::length(xy(p) - c) <= o.radius) return t;
+    if (!finite3(p0) || !finite3(p1) || !physics::finite(o.a) || !physics::finite(o.b)) return std::nullopt;
+    // Punto de máximo acercamiento en XY entre p0→p1 y el eje a→b de la cápsula (exacto para
+    // cualquier longitud: sirve igual para un sub-paso de flecha que para una línea de visión)
+    const Vec2 q0 = xy(p0), q1 = xy(p1), d = q1 - q0;
+    const float len2 = physics::dot(d, d);
+    auto paramOn = [&](Vec2 p) {
+        return len2 > 1e-12f ? std::clamp(physics::dot(p - q0, d) / len2, 0.0f, 1.0f) : 0.0f;
+    };
+    float t = 0.0f, dist = 0.0f;
+    if (const auto hit = physics::segmentIntersect2D(q0, q1, o.a, o.b)) {
+        t = hit->t;
+    } else {
+        const float ta = paramOn(o.a), tb = paramOn(o.b);
+        const struct {
+            float t, d;
+        } c[4] = {{0.0f, physics::length(q0 - physics::closestPointOnSegment2D(q0, o.a, o.b))},
+                  {1.0f, physics::length(q1 - physics::closestPointOnSegment2D(q1, o.a, o.b))},
+                  {ta, physics::length(o.a - (q0 + d * ta))},
+                  {tb, physics::length(o.b - (q0 + d * tb))}};
+        t = c[0].t;
+        dist = c[0].d;
+        for (const auto& k : c) {
+            if (k.d < dist) {
+                dist = k.d;
+                t = k.t;
+            }
+        }
     }
-    return std::nullopt;
+    if (dist > o.radius) return std::nullopt;
+    const float z = p0.z + (p1.z - p0.z) * t;
+    if (z < o.zMin || z > o.zMax) return std::nullopt;
+    return t;
 }
 
 void Projectiles::fire(Vec3 origin, Vec3 dir, float charge, const physics::SectorWorld* world) {
