@@ -19,6 +19,8 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 add_subdirectory(${SRC_DIR}/vfs ${CMAKE_BINARY_DIR}/vfs)
 add_subdirectory(${SRC_DIR}/loc ${CMAKE_BINARY_DIR}/loc)
 add_subdirectory(${SRC_DIR}/render ${CMAKE_BINARY_DIR}/render)
+add_subdirectory(${SRC_DIR}/audio ${CMAKE_BINARY_DIR}/audio)
+add_subdirectory(${SRC_DIR}/ui ${CMAKE_BINARY_DIR}/ui)
 include(${SRC_DIR}/cmake/Strict.cmake)
 
 add_executable(vfs_tests test_main.cpp test_vfs.cpp)
@@ -33,7 +35,17 @@ add_executable(render_tests test_main.cpp test_png.cpp test_kfont.cpp test_text_
 target_link_libraries(render_tests PRIVATE turok2_render_core turok2_loc miniz)
 turok2_strict(render_tests)
 
+add_executable(audio_tests test_main.cpp test_wav.cpp test_ogg.cpp test_mixer.cpp)
+target_link_libraries(audio_tests PRIVATE turok2_audio_core)
+turok2_strict(audio_tests)
+
+add_executable(ui_tests test_main.cpp test_menu_nav.cpp test_settings.cpp test_menu_controller.cpp)
+target_link_libraries(ui_tests PRIVATE turok2_ui_core)
+turok2_strict(ui_tests)
+
 enable_testing()
 add_test(NAME vfs COMMAND vfs_tests)
 add_test(NAME loc COMMAND loc_tests)
 add_test(NAME render COMMAND render_tests)
+add_test(NAME audio COMMAND audio_tests)
+add_test(NAME ui COMMAND ui_tests)
