@@ -1,0 +1,2 @@
+# Código vendored: se guarda byte a byte para que coincida con los SHA-256 de VENDOR.md
+third_party/miniz/** -text

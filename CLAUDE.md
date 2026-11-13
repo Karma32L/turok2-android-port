@@ -8,6 +8,7 @@ Entorno de desarrollo: Ubuntu Linux. SDK en `~/Android/Sdk` (ruta definida en `l
 - `src/` — código nativo C/C++ y su `CMakeLists.txt` (independiente de Android cuando sea posible).
 - `tools/` — utilidades host (extractores/convertidores de datos del juego).
 - `docs/` — documentación técnica.
+- `third_party/` — SDL2 (submódulo) y miniz 3.0.2 (vendored, ver `third_party/miniz/VENDOR.md`).
 
 # Comandos Clave
 - Compilar APK debug: `./gradlew assembleDebug`
@@ -17,6 +18,7 @@ Entorno de desarrollo: Ubuntu Linux. SDK en `~/Android/Sdk` (ruta definida en `l
 - Instalar en dispositivo: `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`
 - Logs nativos: `adb logcat -s turok2:*`
 - Pruebas (stdlib, datos sintéticos): `python3 -m unittest discover -s tests -v`
+- Tests nativos host (ASan/UBSan, .kpf sintéticos): `cmake -S tests/native -B build-host && cmake --build build-host -j && ctest --test-dir build-host --output-on-failure`
 - Preparar assets: `python3 tools/prepare_assets.py {detect|inspect|install --mode adb|local|extract}`
 
 # Regla de Assets (ESTRICTA — sin excepciones)

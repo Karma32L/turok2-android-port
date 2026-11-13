@@ -12,6 +12,7 @@ android/app/src/main/assets/game_data/*
 *.aab
 build/
 .cxx/
+build-host/
 .externalNativeBuild/
 .gradle/
 local.properties
