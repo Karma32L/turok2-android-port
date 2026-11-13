@@ -139,6 +139,27 @@ TEST(real_kpf_mapas_y_mallas) {
                 set.markers.size());
     CHECK(geo->actors.size() == 155 && enemies == 1);
     CHECK(set.stats.placed > 0 && set.stats.skipped == 0 && set.stats.modelsFailed == 0);
+    // Los enemigos (aquí, el Endtrail tipo 201) reproducen un idle en bucle cuya pose varía con el tiempo
+    std::vector<render3d::BoneMatrix> p0, p1;
+    std::size_t animatedEnemies = 0;
+    for (const render3d::ActorInstance& a : set.instances) {
+        if (!a.loop) continue;
+        const render3d::ActorModel& m = set.models[a.model];
+        render3d::ActorInstance b = a;
+        set.palette(a, p0);
+        b.time = 0.5f;
+        set.palette(b, p1);
+        bool moves = false;
+        for (std::size_t i = 0; i < p0.size(); ++i)
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c) moves = moves || std::fabs(p0[i].row[r][c] - p1[i].row[r][c]) > 1e-3f;
+        const render3d::AnimClip* clip =
+            m.anims && a.clip >= 0 ? &m.anims->clips[static_cast<std::size_t>(a.clip)] : nullptr;
+        std::printf("  enemigo tipo %u %s: clip id %u, %u frames, pose animada %d\n", a.type, m.path.c_str(),
+                    clip ? clip->id : 0, clip ? clip->frames : 0, moves);
+        animatedEnemies += clip && clip->frames > 1 && moves;
+    }
+    CHECK(animatedEnemies == enemies);
 }
 
 // .skinnedmesh y .anim del .kpf: todos deben parsear y cada .anim debe casar con su malla homónima

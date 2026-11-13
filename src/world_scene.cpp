@@ -20,12 +20,14 @@ constexpr float kFar = 16384.0f;
 
 // Arma en primera persona (kWpn_Bow de defs/weaponInfo.txt + defs/actors/weapons.txt). El modelo
 // mide ~2 900 u: se escala y se coloca en espacio de vista (x derecha, y arriba, z hacia atrás).
-// Escala y offset ajustados a ojo simulando la vista (ver docs/FORMATS.md); afinar en el dispositivo.
+// Offset calibrado con un render por software de las poses ANIM_WPN_IDLE y ANIM_WPN_CHARGE (FOV 70°,
+// aspecto 20:9): la mano queda abajo a la izquierda, el arco bajo la mira y la punta de la flecha justo
+// debajo del centro. Con (7, -7, -10) el arco cruzaba la línea de la mira (probado en el dispositivo).
 constexpr const char* kWeaponMesh = "char/Weapon_Normal_Bow.skinnedmesh";
 constexpr const char* kWeaponAnim = "anims/Weapon_Normal_Bow.anim";
 constexpr int kWeaponAmmo = 10;                             // initialAmmoAmount
 constexpr float kWeaponScale = 0.01f;
-constexpr render3d::Vec3 kWeaponOffset{7.0f, -7.0f, -10.0f};
+constexpr render3d::Vec3 kWeaponOffset{9.0f, -10.0f, -12.0f};
 constexpr float kWeaponFovY = 1.2217305f;  // 70°, fijo: no depende del FOV del mundo
 constexpr float kWeaponNear = 1.0f, kWeaponFar = 200.0f;
 constexpr float kGroundSearch = 128.0f;    // al apoyar actores: margen sobre su z para buscar suelo
