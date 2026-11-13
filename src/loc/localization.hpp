@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -41,6 +42,11 @@ private:
 
 // UTF-8 estricto: rechaza secuencias overlong, surrogates (U+D800..DFFF) y > U+10FFFF.
 bool isValidUtf8(std::string_view s);
+
+// Decodifica el codepoint que empieza en s[i] con las mismas reglas estrictas.
+// Éxito: escribe *cp y avanza i tras la secuencia. Error: avanza i un byte (permite
+// resincronizar) y devuelve false. Requiere i < s.size().
+bool nextCodepoint(std::string_view s, std::size_t& i, std::uint32_t& cp);
 
 Table parse(std::string_view text);
 

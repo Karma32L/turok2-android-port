@@ -29,8 +29,8 @@ add_executable(loc_tests test_main.cpp test_loc.cpp)
 target_link_libraries(loc_tests PRIVATE turok2_loc)
 turok2_strict(loc_tests)
 
-add_executable(render_tests test_main.cpp test_png.cpp)
-target_link_libraries(render_tests PRIVATE turok2_render_core miniz)
+add_executable(render_tests test_main.cpp test_png.cpp test_kfont.cpp test_text_layout.cpp)
+target_link_libraries(render_tests PRIVATE turok2_render_core turok2_loc miniz)
 turok2_strict(render_tests)
 
 enable_testing()
