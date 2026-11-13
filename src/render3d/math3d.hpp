@@ -130,6 +130,13 @@ inline Mat4 modelMatrix(const InstanceTransform& xf) {
     return r;
 }
 
+// Punto p transformado por una matriz afín (w = 1)
+inline Vec3 transformPoint(const Mat4& m, Vec3 p) {
+    return {m.at(0, 0) * p.x + m.at(0, 1) * p.y + m.at(0, 2) * p.z + m.at(0, 3),
+            m.at(1, 0) * p.x + m.at(1, 1) * p.y + m.at(1, 2) * p.z + m.at(1, 3),
+            m.at(2, 0) * p.x + m.at(2, 1) * p.y + m.at(2, 2) * p.z + m.at(2, 3)};
+}
+
 // Proyección en perspectiva estilo glFrustum (clip z en [-w, w]); fovY en radianes
 inline Mat4 perspective(float fovY, float aspect, float zNear, float zFar) {
     Mat4 r;

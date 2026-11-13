@@ -470,6 +470,7 @@ void WorldScene::drawActors(const render3d::Mat4& vp, render3d::Vec3 eye) {
     if (!actors_ || !actorRenderer_.ready()) return;
     actorRenderer_.begin(vp, eye, fog_);
     for (const render3d::ActorInstance& a : actors_->instances) {
+        if (!a.visible) continue;
         actors_->palette(a, palette_);
         actorRenderer_.drawModel(a.model, actors_->modelMatrix(a), palette_);
     }

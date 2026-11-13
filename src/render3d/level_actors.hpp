@@ -41,15 +41,26 @@ struct ActorModel {
 
 struct ActorInstance {
     std::size_t model = 0;
+    std::size_t source = 0;      // índice del MapActor de origen (en el vector pasado a buildActors)
     std::uint32_t type = 0;
     InstanceTransform xf;
     float yaw = 0.0f;            // rotación extra sobre Z (giro de los recogibles)
     int clip = -1;               // índice en anims->clips; -1 = pose identidad (modelo estático)
     float time = 0.0f;           // s dentro del clip
-    bool loop = false;           // false: congelado en el frame 0
+    bool loop = false;           // en bucle; sin bucle y sin playing: congelado en `time`
+    bool playing = false;        // sin bucle: avanza hasta el final del clip y se queda allí
+    float rate = 1.0f;           // velocidad de reproducción (> 0)
+    bool visible = true;         // false: no se dibuja ni avanza
+    bool stripRootMotion = false;  // anula el avance XY de la raíz (el movimiento lo pone la lógica)
     bool spin = false;
     bool trackGround = false;    // la escena ajusta xf.pos.z al suelo
     float heightOffset = 0.0f;
+};
+
+// Evento de animación alcanzado por una instancia durante ActorSet::update
+struct ClipEvent {
+    std::size_t instance = 0;
+    const AnimEvent* event = nullptr;  // apunta a ActorSet::models (vive lo mismo que el set)
 };
 
 struct ActorStats {
@@ -67,11 +78,22 @@ struct ActorSet {
     std::vector<MapActor> markers;  // kActor_WarpPoint y kActor_Misc_Portal
     ActorStats stats;
 
-    // Avanza animaciones en bucle y giros (dt no finito o <= 0: sin cambio)
-    void update(float dt);
+    // Avanza animaciones (en bucle o en reproducción) y giros de las instancias visibles
+    // (dt no finito o <= 0: sin cambio). Si events no es nulo, añade los eventos alcanzados.
+    void update(float dt, std::vector<ClipEvent>* events = nullptr);
     // Matriz de modelo (posición, rotación + giro, escala) y paleta de huesos de una instancia
     Mat4 modelMatrix(const ActorInstance& a) const;
     void palette(const ActorInstance& a, std::vector<BoneMatrix>& out) const;
+
+    // Clip actual (nullptr sin animación)
+    const AnimClip* clipOf(const ActorInstance& a) const;
+    // Cambia al clip con ese id desde el principio: en bucle, o una vez (playing). false si no existe.
+    bool play(ActorInstance& a, std::uint32_t clipId, bool loop) const;
+    // Sin bucle: ¿llegó al final del clip? (sin clip: true)
+    bool finished(const ActorInstance& a) const;
+    // Caja de la malla en la pose actual, en espacio de modelo (sin escala ni rotación de instancia).
+    // false si la malla está vacía.
+    bool posedBounds(const ActorInstance& a, Vec3& min, Vec3& max) const;
 };
 
 struct ActorLimits {

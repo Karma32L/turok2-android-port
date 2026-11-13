@@ -2,6 +2,7 @@
 
 #include <vfs.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_map>
 #include <utility>
@@ -136,6 +137,7 @@ ActorSet buildActors(const vfs::Vfs& fs, const std::vector<MapActor>& actors, Bu
         }
         ActorInstance inst;
         inst.model = *model;
+        inst.source = static_cast<std::size_t>(&a - actors.data());
         inst.type = a.type;
         inst.xf = {instanceRotation(a.rot), a.pos, a.scale};
         inst.trackGround = a.trackGround;
@@ -153,15 +155,69 @@ ActorSet buildActors(const vfs::Vfs& fs, const std::vector<MapActor>& actors, Bu
     return set;
 }
 
-void ActorSet::update(float dt) {
+void ActorSet::update(float dt, std::vector<ClipEvent>* events) {
     if (!std::isfinite(dt) || dt <= 0.0f) return;
-    for (ActorInstance& a : instances) {
+    std::vector<const AnimEvent*> hit;
+    for (std::size_t i = 0; i < instances.size(); ++i) {
+        ActorInstance& a = instances[i];
+        if (!a.visible) continue;
         if (a.spin) a.yaw = std::fmod(a.yaw + kPickupSpinRate * dt, kTwoPi);
-        if (a.loop && a.clip >= 0) {
-            const AnimClip& c = models[a.model].anims->clips[static_cast<std::size_t>(a.clip)];
-            a.time = std::fmod(a.time + dt, c.duration());  // duration() > 0: frames >= 1 y fps > 0
+        const AnimClip* c = clipOf(a);
+        if (!c || (!a.loop && !a.playing)) continue;
+        const float step = dt * (std::isfinite(a.rate) && a.rate > 0.0f ? a.rate : 1.0f);
+        if (events) {
+            hit.clear();
+            collectEvents(*c, a.time, step, a.loop, hit);
+            for (const AnimEvent* e : hit) events->push_back({i, e});
         }
+        // duration() > 0: frames >= 1 y fps > 0
+        if (a.loop) a.time = std::fmod(a.time + step, c->duration());
+        else a.time = std::min(a.time + step, c->duration());
     }
+}
+
+const AnimClip* ActorSet::clipOf(const ActorInstance& a) const {
+    const ActorModel& m = models[a.model];
+    if (!m.anims || a.clip < 0 || static_cast<std::size_t>(a.clip) >= m.anims->clips.size()) return nullptr;
+    return &m.anims->clips[static_cast<std::size_t>(a.clip)];
+}
+
+bool ActorSet::play(ActorInstance& a, std::uint32_t clipId, bool loop) const {
+    const ActorModel& m = models[a.model];
+    if (!m.anims) return false;
+    for (std::size_t i = 0; i < m.anims->clips.size(); ++i) {
+        if (m.anims->clips[i].id != clipId) continue;
+        a.clip = static_cast<int>(i);
+        a.time = 0.0f;
+        a.loop = loop;
+        a.playing = !loop;
+        return true;
+    }
+    return false;
+}
+
+bool ActorSet::finished(const ActorInstance& a) const {
+    const AnimClip* c = clipOf(a);
+    return !c || (!a.loop && a.time >= c->duration());
+}
+
+bool ActorSet::posedBounds(const ActorInstance& a, Vec3& min, Vec3& max) const {
+    const ActorModel& m = models[a.model];
+    if (m.mesh.vertices.empty()) return false;
+    std::vector<BoneMatrix> pose;
+    palette(a, pose);
+    bool first = true;
+    for (const SkinnedVertex& v : m.mesh.vertices) {
+        const Vec3 p = v.bone < pose.size() ? pose[v.bone].apply({v.pos[0], v.pos[1], v.pos[2]})
+                                            : Vec3{v.pos[0], v.pos[1], v.pos[2]};
+        if (first) {
+            min = max = p;
+            first = false;
+        }
+        min = {std::min(min.x, p.x), std::min(min.y, p.y), std::min(min.z, p.z)};
+        max = {std::max(max.x, p.x), std::max(max.y, p.y), std::max(max.z, p.z)};
+    }
+    return true;
 }
 
 Mat4 ActorSet::modelMatrix(const ActorInstance& a) const {
@@ -176,7 +232,22 @@ void ActorSet::palette(const ActorInstance& a, std::vector<BoneMatrix>& out) con
         identityPose(m.mesh.boneCount(), out);
         return;
     }
-    evaluatePose(m.anims->clips[static_cast<std::size_t>(a.clip)], m.mesh.parents, a.time, a.loop, out);
+    const AnimClip& clip = m.anims->clips[static_cast<std::size_t>(a.clip)];
+    if (!evaluatePose(clip, m.mesh.parents, a.time, a.loop, out) || !a.stripRootMotion) return;
+    // Sin desplazamiento XY de la raíz (hueso 0): los clips de andar/atacar avanzan el modelo y
+    // la lógica ya mueve el actor. Se resta a todo lo que cuelga del hueso 0 su avance desde el
+    // frame 0 del clip.
+    const Vec3 start = clip.transTrack[0] == kNoTrack ? clip.fixedPos[0]
+                                                      : clip.trans[std::size_t{clip.transTrack[0]} * clip.frames];
+    const float dx = out[0].row[0][3] - start.x, dy = out[0].row[1][3] - start.y;
+    std::vector<bool> fromRoot(out.size(), false);
+    for (std::size_t b = 0; b < out.size(); ++b) {
+        const std::int16_t p = m.mesh.parents[b];
+        fromRoot[b] = b == 0 || (p >= 0 && fromRoot[static_cast<std::size_t>(p)]);
+        if (!fromRoot[b]) continue;
+        out[b].row[0][3] -= dx;
+        out[b].row[1][3] -= dy;
+    }
 }
 
 }  // namespace render3d

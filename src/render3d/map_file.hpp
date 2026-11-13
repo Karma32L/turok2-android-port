@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "byte_view.hpp"
@@ -33,19 +35,43 @@ struct SpawnPoint {
     float yaw = 0.0f;  // radianes, convención del .map (ver instanceRotation)
 };
 
+// Propiedades de texto que usa la lógica del nivel (kexScriptComponent, kexEnemyAIComponent y
+// kexEventLinkComponent). Solo se guardan las claves de kActorPropKeys: el resto (hay scripts con
+// cientos de pares) se ignora sin coste de memoria.
+struct ActorProps {
+    std::vector<std::pair<std::string, std::string>> kv;
+
+    std::string_view text(std::string_view key) const;          // "" si no está
+    std::optional<float> number(std::string_view key) const;    // nullopt si no está o no es un número
+    float number(std::string_view key, float fallback) const;
+};
+
 // Actor de la sección 5 (ver docs/FORMATS.md, "Actores"). Las rutas vienen ya normalizadas por
 // el VFS y con la extensión comprobada; "" si el actor no tiene ese componente.
 struct MapActor {
     std::uint32_t type = 0;  // kActor_* de defs/common.txt (0xFFFFFFFF = genérico)
     Vec3 pos, scale{1, 1, 1}, rot;
-    std::uint32_t tag = 0;  // u32 @40 sin identificar (¿id de warp?)
+    std::uint32_t tag = 0;  // u32 @40: TID del actor (0xFFFFFFFF = -1, sin TID); ver tid()
     std::string skinnedMesh, anim;  // kexRenderMeshComponent
     std::string staticMesh;         // kexStaticMeshComponent
     bool trackGround = false;       // kexWorldComponent.bTrackGround: se apoya en el suelo
     float heightOffset = 0.0f;
+    float radius = 0.0f, height = 0.0f;  // kexWorldComponent: cilindro de colisión (0 = sin dato)
+    bool nonSolid = false;               // kexWorldComponent.bNonSolid
     bool enemy = false;             // tiene kexEnemyAIComponent
+    bool eventLink = false;         // tiene kexEventLinkComponent (actor kActor_Action_Common)
     std::uint32_t startAnim = 0;    // kexEnemyAIComponent.startAnimID (0 = por defecto)
+    ActorProps props;
+
+    std::int32_t tid() const { return static_cast<std::int32_t>(tag); }
 };
+
+// Claves de ActorProps que se conservan (scripts TurokDestructible/TurokDoor/TurokActionObject,
+// IA de enemigos y EventLinks)
+constexpr std::string_view kActorPropKeys[] = {
+    "scriptClass", "startHealth", "flags",     "triggerSound", "triggerRadius", "triggerAnim",
+    "idleAnim",    "openEvent",   "openDuration", "sourceTID", "targetTID",     "triggerType",
+    "userValue"};
 
 // Capa de cielo (sección 1 [1], 44 B; idéntica a un bloque SkyLayer_* de defs/skyInfo.txt)
 struct SkyLayer {
@@ -119,9 +145,11 @@ struct MapLimits {
     std::size_t maxActors = 1u << 14;   // máximo real: 682
     std::size_t maxComponents = 64;     // por actor
     std::size_t maxProperties = 256;    // pares clave/valor por componente usado
+    std::size_t maxPropValue = 128;     // bytes de un valor de ActorProps (más largo: se ignora)
 };
 
 constexpr std::uint32_t kMapSections = 9;
+constexpr std::uint32_t kActorActionCommon = 10000;  // contenedor de un EventLink
 // Instancia: 88 B en la campaña, 84 B en levels/n64/; ambas empiezan por los 64 B que se leen
 constexpr std::uint32_t kInstanceMinStride = 64;
 constexpr std::uint32_t kActorHeaderStride = 48;
