@@ -3,16 +3,19 @@
 // Sube LevelGeometry a un único VAO/VBO/IBO (índices u32), carga las texturas de los
 // materiales desde el VFS y dibuja en tres pasadas: opacos → alpha test → translúcidos
 // (blend, sin escritura de profundidad). Iluminación básica: sol direccional + ambiente con
-// las normales del modelo (el juego no trae lightmaps ni colores por vértice).
+// las normales del modelo (el juego no trae lightmaps ni colores por vértice), y niebla
+// lineal por distancia con los parámetros del área en la que está la cámara.
 #pragma once
 
 #include <GLES3/gl3.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "atmosphere.hpp"
 #include "level_builder.hpp"
 #include "math3d.hpp"
 #include "render/gl/gl_renderer.hpp"
@@ -22,6 +25,12 @@ class Vfs;
 }
 
 namespace render3d::gl {
+
+// Niebla lineal por distancia (ver atmosphere.hpp)
+using FogParams = Fog;
+
+// PNG del VFS → textura con mipmaps (nullopt y log si falta o es inválido)
+std::optional<render::gl::Texture> loadVfsTexture(const vfs::Vfs& fs, const std::string& path);
 
 struct UploadStats {
     std::size_t textures = 0;        // texturas distintas subidas
@@ -43,7 +52,7 @@ public:
     bool ready() const { return program_ != 0; }
 
     // Deja el estado GL como lo espera SpriteBatch (sin depth test ni culling, sin sampler)
-    void draw(const Mat4& viewProj);
+    void draw(const Mat4& viewProj, Vec3 camPos, const FogParams& fog);
 
 private:
     enum Pass { Opaque, Masked, Translucent };
@@ -65,6 +74,7 @@ private:
     GLuint samplers_[3][2] = {};  // [WrapMode][lineal]
     GLint uViewProj_ = -1, uTex_ = -1, uDiffuse_ = -1, uAlphaRef_ = -1, uFullbright_ = -1;
     GLint uSunDir_ = -1, uSunColor_ = -1, uAmbient_ = -1;
+    GLint uCamPos_ = -1, uFogColor_ = -1, uFogRange_ = -1;
     std::vector<render::gl::Texture> textures_;
     std::vector<Draw> draws_;  // ordenados por pasada
 };

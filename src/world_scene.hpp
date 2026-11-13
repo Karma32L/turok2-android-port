@@ -11,10 +11,13 @@
 #include <optional>
 #include <vector>
 
+#include "atmosphere.hpp"
 #include "fly_camera.hpp"
 #include "level_builder.hpp"
 #include "render/gl/gl_renderer.hpp"
+#include "render3d/gl/sky_renderer.hpp"
 #include "render3d/gl/world_renderer.hpp"
+#include "sector_world.hpp"
 #include "touch_sticks.hpp"
 #include "vfs.hpp"
 
@@ -39,9 +42,15 @@ public:
 private:
     bool initGl(const vfs::Vfs& fs);
     void drawHud();
+    render3d::Fog targetFog();  // niebla del área bajo la cámara (actualiza underwater_)
 
     std::optional<render3d::LevelGeometry> geo_;
+    std::optional<physics::SectorWorld> world_;  // nullopt: nivel sin colisión
     render3d::gl::WorldRenderer renderer_;
+    render3d::gl::SkyRenderer sky_;
+    render3d::Fog fog_;
+    float time_ = 0.0f;
+    bool underwater_ = false;
     render3d::FlyCamera camera_;
     input::TouchSticks sticks_;
     std::optional<render::gl::SpriteBatch> hud_;  // optional: se destruye/recrea con el contexto

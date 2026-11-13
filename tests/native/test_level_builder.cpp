@@ -153,3 +153,22 @@ TEST(nivel_errores_fatales) {
     l.maxIndices = 6;
     CHECK(!buildLevel(fs2, "levels/test.map", nullptr, nullptr, l));
 }
+
+TEST(nivel_cielo_y_colision) {
+    // Capa de cielo que apunta a surf_glass de mat_t.kmat y otra a un material inexistente
+    const kb::Bytes sec1 = kb::skyLayersSection(
+        {{"materials/test/mat_t/surf_glass", {}}, {"_default", {}}, {"skies/skyMaterials/nope", {}}});
+    const kb::Bytes sec2 = kb::collisionSection({{0, 0, 0, 100}, {10, 0, 0, 100}, {0, 10, 0, 100}}, {kb::CArea{}},
+                                                {{0, 0, 0, 1, 2, 0xFFFF, 0xFFFF, 0xFFFF, 0}});
+    const kb::Bytes map = kb::mapWith({kb::area({at("models/wall.staticmesh", {0, 0, 0})})}, {}, sec1, sec2);
+    const vfs::Vfs fs = makeVfs(map);
+    const auto geo = buildLevel(fs, "levels/test.map");
+    CHECK(geo.has_value());
+    if (!geo) return;
+    CHECK(geo->skyLayers.size() == 2 && geo->skyMaterials.size() == 2);
+    if (geo->skyMaterials.size() == 2) {
+        CHECK(geo->skyMaterials[0].name == "surf_glass" && geo->skyMaterials[0].blend);
+        CHECK(geo->skyMaterials[1].texture.empty());  // por defecto: blanco
+    }
+    CHECK(geo->collision && geo->collision->sectors.size() == 1);
+}

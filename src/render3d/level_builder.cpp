@@ -148,7 +148,12 @@ std::optional<LevelGeometry> buildLevel(const vfs::Vfs& fs, std::string_view map
         ++geo.stats.instances;
     }
 
+    // Materiales de las capas de cielo: misma resolución (y caché de .kmat) que las mallas
+    std::vector<std::size_t> skyIdx;
+    for (const SkyLayer& l : geo.skyLayers) skyIdx.push_back(materials.resolve(l.material));
+
     geo.materials = materials.take();
+    for (std::size_t i : skyIdx) geo.skyMaterials.push_back(geo.materials[i]);
     geo.indices.reserve(totalIndices);
     for (std::size_t mi = 0; mi < perMaterial.size(); ++mi) {
         const auto& idx = perMaterial[mi];

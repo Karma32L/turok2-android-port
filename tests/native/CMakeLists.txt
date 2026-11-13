@@ -47,7 +47,7 @@ target_link_libraries(ui_tests PRIVATE turok2_ui_core)
 turok2_strict(ui_tests)
 
 add_executable(render3d_tests test_main.cpp test_kexbin.cpp test_map.cpp test_static_mesh.cpp test_kmat.cpp
-    test_level_builder.cpp test_camera.cpp test_real_kpf.cpp)
+    test_level_builder.cpp test_camera.cpp test_atmosphere.cpp test_real_kpf.cpp)
 target_link_libraries(render3d_tests PRIVATE turok2_render3d_core turok2_vfs miniz)
 turok2_strict(render3d_tests)
 

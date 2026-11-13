@@ -25,6 +25,7 @@ add_library(turok2 SHARED
     vfs/vfs_sdl.cpp
     render/gl/gl_renderer.cpp
     render3d/gl/world_renderer.cpp
+    render3d/gl/sky_renderer.cpp
     audio/audio_sdl.cpp
     input/input_sdl.cpp)
 # src/ como raíz de includes de la app (log.hpp, "audio/...", "ui/...")
