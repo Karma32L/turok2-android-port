@@ -43,9 +43,10 @@ PadFly readPadFly(const std::vector<SDL_GameController*>& controllers);
 
 // Botones de acción del mando (cualquiera de los conectados):
 //   A = saltar / nadar arriba; B o RS (clic del stick derecho) = agacharse / bucear;
+//   RT o X = disparar (mantenido; en vuelo libre RT sigue subiendo y no dispara);
 //   Back/Select = alternar el vuelo libre (flanco: una vez por pulsación).
 struct PadActions {
-    bool jump = false, crouch = false, toggleFly = false;
+    bool jump = false, crouch = false, toggleFly = false, fire = false;
 };
 
 class PadActionReader {
