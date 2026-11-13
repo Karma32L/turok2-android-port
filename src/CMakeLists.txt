@@ -11,11 +11,12 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/SDL2 ${CMAKE_BINARY_
 # Módulos independientes de plataforma (también se compilan en el host para tests)
 add_subdirectory(vfs)
 add_subdirectory(loc)
+add_subdirectory(render)
 
 # Debe ser SHARED: SDLActivity carga libturok2.so y busca SDL_main en ella
-add_library(turok2 SHARED main.cpp vfs/vfs_sdl.cpp)
+add_library(turok2 SHARED main.cpp title_screen.cpp vfs/vfs_sdl.cpp render/gl/gl_renderer.cpp)
 
 # Flags estrictos solo para nuestro código (no se imponen a SDL ni a miniz)
 turok2_strict(turok2)
 
-target_link_libraries(turok2 PRIVATE turok2_vfs turok2_loc SDL2::SDL2 GLESv3 log)
+target_link_libraries(turok2 PRIVATE turok2_vfs turok2_loc turok2_render_core SDL2::SDL2 GLESv3 log)
