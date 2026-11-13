@@ -117,11 +117,82 @@ inline Bytes skySection(const std::string& sky) {
     return container({container({leafString(sky), leafString("_default")}), leaf(44, 0, {})});
 }
 
+// Registro de capa de cielo (44 B): white, black, 6 floats, fadeIn/Out, opacity, flags
+struct Sky {
+    std::uint8_t white[4] = {255, 255, 255, 255}, black[4] = {116, 116, 116, 255};
+    float animSpeed = 1, cameraTrack = 0.5f, speedScalar = 1, heightOffset = 1536, fadeThrough = 61.44f, tile = 0.5f;
+    std::uint8_t opacity = 155, flags = 1;
+};
+
+inline Bytes skyRecord(const Sky& k) {
+    Bytes b(k.white, k.white + 4);
+    b.insert(b.end(), k.black, k.black + 4);
+    for (float f : {k.animSpeed, k.cameraTrack, k.speedScalar, k.heightOffset, k.fadeThrough, k.tile, 0.0667f, 0.0667f})
+        putF(b, f);
+    b.push_back(k.opacity);
+    b.push_back(k.flags);
+    put16(b, 0);
+    return b;
+}
+
+// Sección 1 con nombres y registros emparejados por índice
+inline Bytes skyLayersSection(const std::vector<std::pair<std::string, Sky>>& layers) {
+    std::vector<Bytes> names;
+    Bytes recs;
+    for (const auto& l : layers) {
+        names.push_back(leafString(l.first));
+        append(recs, skyRecord(l.second));
+    }
+    return container({container(names), leaf(44, static_cast<std::uint32_t>(layers.size()), recs)});
+}
+
+// ------------------------------------------------------------------ colisión (sección 2)
+
+struct CPoint {
+    float x, y, floorZ, ceilZ;
+};
+struct CArea {
+    std::uint32_t flags = 0;
+    std::uint8_t fog[4] = {110, 110, 120, 255}, water[4] = {0, 42, 190, 127};
+    float fogEnd = 5120, fogStart = 3750, waterZ = 0;
+};
+struct CSector {
+    std::uint16_t area, flags, p0, p1, p2, l0, l1, l2, region;
+};
+
+inline Bytes collisionSection(const std::vector<CPoint>& pts, const std::vector<CArea>& areas,
+                              const std::vector<CSector>& secs, std::uint32_t areaStride = 96) {
+    Bytes p, a, s;
+    for (const CPoint& q : pts)
+        for (float f : {q.x, q.y, q.floorZ, q.ceilZ}) putF(p, f);
+    for (const CArea& r : areas) {
+        Bytes e;
+        put32(e, r.flags);
+        put32(e, 0);
+        e.insert(e.end(), r.fog, r.fog + 4);
+        e.insert(e.end(), r.water, r.water + 4);
+        for (float f : {r.fogEnd, 1536.0f, r.fogStart, 1116.0f, r.waterZ}) putF(e, f);
+        e.resize(areaStride, 0);
+        append(a, e);
+    }
+    for (const CSector& q : secs)
+        for (std::uint16_t v : {q.area, q.flags, q.p0, q.p1, q.p2, q.l0, q.l1, q.l2, q.region}) put16(s, v);
+    return container({leaf(16, static_cast<std::uint32_t>(pts.size()), p),
+                      leaf(areaStride, static_cast<std::uint32_t>(areas.size()), a),
+                      leaf(18, static_cast<std::uint32_t>(secs.size()), s)});
+}
+
+// Mapa de 9 secciones con secciones 1 y 2 explícitas
+inline Bytes mapWith(const std::vector<Bytes>& areas, const std::vector<Bytes>& actors, const Bytes& sec1,
+                     const Bytes& sec2) {
+    return container({emptyLeaf(), sec1, sec2, container({}), container(areas), container(actors), emptyLeaf(),
+                      emptyLeaf(), emptyLeaf()});
+}
+
 // Mapa de 9 secciones con las áreas y actores dados
 inline Bytes map(const std::vector<Bytes>& areas, const std::vector<Bytes>& actors = {},
                  const std::string& sky = "skies/skyMaterials/test_sky") {
-    return container({emptyLeaf(), skySection(sky), container({}), container({}), container(areas), container(actors),
-                      emptyLeaf(), emptyLeaf(), emptyLeaf()});
+    return mapWith(areas, actors, skySection(sky), container({}));
 }
 
 // ------------------------------------------------------------------ .staticmesh

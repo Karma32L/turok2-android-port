@@ -183,8 +183,8 @@ no es una versión aparte: es el `n` del contenedor raíz (los 177 mapas tienen 
 | Sección | Contenido | Uso |
 |---|---|---|
 | 0 | hoja vacía | — |
-| 1 | `[0]` 16 cadenas: material del cielo (`skies/skyMaterials/…`) y `_default`; `[1]` 16 registros de 44 B (capas de cielo, sin identificar) | Se lee el material del cielo |
-| 2 | colisión (hipótesis): 556 × 16 B puntos, 122 × 96 B sectores, 824 × 18 B triángulos/enlaces en Port_of_Adia_1 | No |
+| 1 | `[0]` 16 cadenas: material de cada capa de cielo (`skies/skyMaterials/…`) o `_default`; `[1]` 16 registros de 44 B (capas de cielo) | **Sí**: capas de cielo |
+| 2 | **colisión**: `{[0] puntos 16 B, [1] áreas 96 B (92 en `n64/`), [2] sectores 18 B}`; en Port_of_Adia_1 556 / 122 / 824 | **Sí**: física, agua y niebla |
 | 3 | `[0]` 2 × u16; `[1]`, `[2]` una entrada de 8 B (2 × f32) por área (¿límites 2D?) | No |
 | **4** | **áreas**: cada una es una hoja vacía o un contenedor `{[0] hoja de instancias, [1] contenedor de rutas .staticmesh}` con tantas rutas como instancias | **Sí** |
 | 5 | actores: contenedor `{[0] cabecera 48 B, [1] componentes}` | Se busca el inicio del jugador |
@@ -218,6 +218,58 @@ Cabecera de actor (48 B): `u32 tipo`, `f32[3]` posición, `f32[3]` escala, `f32[
 (`[0]` = yaw), resto sin identificar. Tipo **100** = `kActor_SPStart` (`defs/common.txt`).
 Los componentes (`kexLightComponent`, `kexSunLightComponent`, `kexWorldComponent`, …) son
 listas de pares clave/valor en texto; todavía no se interpretan.
+
+### Capa de cielo (sección 1 `[1]`, 44 B)
+
+El registro *i* va con el nombre *i* de `[0]`; los `_default` no se dibujan. Coincide byte a byte con
+el bloque `SkyLayer_*` de `defs/skyInfo.txt` (Port_of_Adia_1 ↔ `SkyLayer_PortOfAdia`, verificado).
+
+| Offset | Tipo | Campo |
+|---:|---|---|
+| 0 | `u8[4]` | `whiteColor` RGBA |
+| 4 | `u8[4]` | `blackColor` RGBA |
+| 8 | `f32` × 6 | `animSpeed`, `cameraTrack`, `speedScalar`, `heightOffset`, `fadeThroughDist`, `tile` |
+| 32 | `f32` × 2 | `fadeInTime`, `fadeOutTime` (no se usan) |
+| 40 | `u8` | `opacity` (0–255) |
+| 41 | `u8` | `flags` |
+| 42 | `u16` | sin identificar |
+
+### Colisión (sección 2)
+
+Es una malla 2.5D de **sectores** triangulares. El jugador camina sobre ella: no hay archivos `.kcol`.
+Esquema común a los 177 mapas (máximo 2 508 puntos, 383 áreas y 3 924 sectores).
+
+**Punto (16 B):** `f32 x, y, sueloZ, techoZ`. Si `techoZ ≤ sueloZ`, el punto no tiene techo: pasa en
+2 733 puntos de otros mapas, casi siempre con `techo == suelo`. Dos puntos de `RiverOfSouls_1` traen un
+techo de ~5·10⁷; el parser los trata también como "sin techo".
+
+**Sector (18 B = 9 × u16):**
+
+| Campo | Significado | Estado |
+|---|---|---|
+| `area` | índice de área | verificado (siempre < nº de áreas) |
+| `flags` | 0x1, 0x8, 0x40, 0x200… | sin identificar |
+| `p[3]` | índices de punto, **CCW en XY** (824/824) | verificado |
+| `link[3]` | vecino al otro lado de la arista `(p[(e+2)%3], p[e])`; `0xFFFF` = pared | verificado (2 172 simétricos, 12 de un solo sentido) |
+| `region` | coincide con el u32 del offset 92 del área | hipótesis |
+
+**Área (96 B; 92 B en `levels/n64/`, iguales en los primeros 36 B):**
+
+| Offset | Tipo | Campo | Estado |
+|---:|---|---|---|
+| 0 | `u32` | flags; **bit 0 = agua** (31 áreas y 303 sectores en Port_of_Adia_1) | bit 0 verificado |
+| 8 | `u8[4]` | color de niebla RGBA (110,110,120 en el puerto) | hipótesis fuerte |
+| 12 | `u8[4]` | color del agua RGBA (74,99,113,165 en las áreas de agua) | hipótesis |
+| 16 | `f32` | fin de la niebla (5120) | hipótesis |
+| 20 | `f32` | segunda distancia (1536; 3072 en áreas de agua) | sin identificar |
+| 24 | `f32` | inicio de la niebla ≈ 0,73 × @16 | hipótesis |
+| 28 | `f32` | ≈ 0,73 × @20 | sin identificar |
+| 32 | `f32` | altura del agua (−737,28) | hipótesis fuerte |
+
+El inicio del jugador de Port_of_Adia_1 cae en el sector 2 y queda 10 u por encima de su suelo.
+`render3d::parseMap` valida todos los índices (área, punto y vecino) y los floats. Si la sección 2 es
+inválida, se descarta con un mensaje (`MapData::collisionError`) sin perder el mapa, y el juego queda en
+modo vuelo. Los valores raros de un área (niebla o agua no finitas) se neutralizan.
 
 ### Validación
 
@@ -288,8 +340,8 @@ Lee el `.kpf` en memoria (nada se extrae) y solo imprime recuentos.
 
 ## Pendiente de análisis
 
-`.skinnedmesh`, `.anim`, la colisión y los componentes de actores de `.map`, y las capas de
-cielo solo tienen identificada su estructura general. Cada parser nuevo sigue el mismo patrón:
+`.skinnedmesh`, `.anim`, los componentes de actores de `.map` y los flags de sector y de área solo
+tienen identificada su estructura general. Cada parser nuevo sigue el mismo patrón:
 - núcleo independiente de GL en su propio módulo;
 - límites comprobados en cada offset y tamaño;
 - tests host con datos sintéticos en `tests/native/`.

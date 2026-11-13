@@ -47,6 +47,8 @@ struct LevelGeometry {
     std::vector<LevelBatch> batches;  // uno por material con triángulos (sin nodraw)
     std::vector<Material> materials;
     std::optional<SpawnPoint> start;
+    std::vector<SkyLayer> skyLayers;          // del .map (sección 1)
+    std::optional<MapCollision> collision;    // del .map (sección 2); nullopt = solo modo vuelo
     Vec3 boundsMin, boundsMax;  // de los vértices transformados (sin significado si está vacío)
     LevelStats stats;
 };
