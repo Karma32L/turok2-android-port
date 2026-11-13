@@ -22,6 +22,7 @@ add_subdirectory(${SRC_DIR}/render ${CMAKE_BINARY_DIR}/render)
 add_subdirectory(${SRC_DIR}/audio ${CMAKE_BINARY_DIR}/audio)
 add_subdirectory(${SRC_DIR}/ui ${CMAKE_BINARY_DIR}/ui)
 add_subdirectory(${SRC_DIR}/render3d ${CMAKE_BINARY_DIR}/render3d)
+add_subdirectory(${SRC_DIR}/physics ${CMAKE_BINARY_DIR}/physics)
 include(${SRC_DIR}/cmake/Strict.cmake)
 
 add_executable(vfs_tests test_main.cpp test_vfs.cpp)
@@ -50,6 +51,11 @@ add_executable(render3d_tests test_main.cpp test_kexbin.cpp test_map.cpp test_st
 target_link_libraries(render3d_tests PRIVATE turok2_render3d_core turok2_vfs miniz)
 turok2_strict(render3d_tests)
 
+add_executable(physics_tests test_main.cpp test_physics_geometry.cpp test_sector_world.cpp
+    test_player_controller.cpp test_real_physics.cpp)
+target_link_libraries(physics_tests PRIVATE turok2_physics_core turok2_vfs miniz)
+turok2_strict(physics_tests)
+
 enable_testing()
 add_test(NAME vfs COMMAND vfs_tests)
 add_test(NAME loc COMMAND loc_tests)
@@ -57,3 +63,4 @@ add_test(NAME render COMMAND render_tests)
 add_test(NAME audio COMMAND audio_tests)
 add_test(NAME ui COMMAND ui_tests)
 add_test(NAME render3d COMMAND render3d_tests)
+add_test(NAME physics COMMAND physics_tests)
