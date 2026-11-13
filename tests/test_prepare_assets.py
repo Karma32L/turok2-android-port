@@ -122,6 +122,48 @@ class TestInspect(TmpCase):
         self.assertEqual(pa.inspect_kpf(kpf, with_hash=False).unsafe, ["../evil.txt"])
 
 
+def synthetic_png_head(w: int, h: int, bd: int = 8, ct: int = 6, il: int = 0) -> bytes:
+    ihdr = w.to_bytes(4, "big") + h.to_bytes(4, "big") + bytes([bd, ct, 0, 0, il])
+    return pa.PNG_SIG + b"\x00\x00\x00\x0dIHDR" + ihdr + b"\x00\x00\x00\x00"
+
+
+class TestFormats(TmpCase):
+    def test_groups_by_folder_and_extension(self) -> None:
+        kpf = make_kpf(
+            self.tmp / "g.kpf",
+            {
+                "textures/a.png": synthetic_png_head(4, 2),
+                "textures/b.PNG": synthetic_png_head(8, 8, ct=2),
+                "fonts/f.kfont": b"texture \"fonts/f.png\"\n",
+                "default.cfg": b"bind x y\n",
+                "models/m.staticmesh": b"",
+            },
+        )
+        r = pa.survey_formats(kpf)
+        self.assertEqual(r.entries, 5)
+        self.assertEqual(r.by_top, {"textures": 2, "fonts": 1, "(raíz)": 1, "models": 1})
+        self.assertEqual(r.by_ext[".png"].count, 2)
+        self.assertEqual(r.by_ext[".kfont"].magic, b'texture "fonts/f')
+        self.assertEqual(r.by_ext[".staticmesh"].magic, b"")  # vacío: sin magic
+        self.assertEqual(r.png, {(8, 6, 0): 1, (8, 2, 0): 1})
+
+    def test_invalid_png_header_counted(self) -> None:
+        kpf = make_kpf(self.tmp / "g.kpf", {"a.png": b"no soy un png", "b.png": pa.PNG_SIG})
+        self.assertEqual(pa.survey_formats(kpf).png, {("invalid",): 2})
+
+    def test_parse_png_header(self) -> None:
+        self.assertEqual(pa.parse_png_header(synthetic_png_head(3, 5, il=1)), (3, 5, 8, 6, 1))
+        bad_ihdr = bytearray(synthetic_png_head(3, 5))
+        bad_ihdr[11] = 14  # longitud de IHDR distinta de 13
+        self.assertIsNone(pa.parse_png_header(bytes(bad_ihdr)))
+
+    def test_not_a_zip(self) -> None:
+        p = self.tmp / "x.kpf"
+        p.write_bytes(b"nada")
+        with self.assertRaises(pa.AssetError):
+            pa.survey_formats(p)
+
+
 class TestExtract(TmpCase):
     def test_zip_slip_blocked(self) -> None:
         kpf = make_kpf(self.tmp / "g.kpf", {"../evil.txt": b"x"})
