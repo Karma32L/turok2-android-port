@@ -15,6 +15,7 @@
 
 #include "kmat.hpp"
 #include "map_file.hpp"
+#include "material_resolver.hpp"
 #include "math3d.hpp"
 #include "static_mesh.hpp"
 
@@ -47,6 +48,7 @@ struct LevelGeometry {
     std::vector<LevelBatch> batches;  // uno por material con triángulos (sin nodraw)
     std::vector<Material> materials;
     std::optional<SpawnPoint> start;
+    std::vector<MapActor> actors;             // del .map (sección 5); ver level_actors.hpp
     std::vector<SkyLayer> skyLayers;          // del .map (sección 1)
     std::vector<Material> skyMaterials;       // uno por capa (blanco por defecto si no existe)
     std::optional<MapCollision> collision;    // del .map (sección 2); nullopt = solo modo vuelo
@@ -58,9 +60,6 @@ struct BuildLimits {
     std::size_t maxVertices = 4u << 20;  // ≈128 MiB de vértices: muy por encima de un nivel real
     std::size_t maxIndices = 12u << 20;
 };
-
-// Mensajes de diagnóstico no fatales (malla que no carga, etc.). Puede ser nulo.
-using BuildLog = void (*)(const std::string& msg);
 
 std::optional<LevelGeometry> buildLevel(const vfs::Vfs& fs, std::string_view mapPath, std::string* err = nullptr,
                                         BuildLog log = nullptr, const BuildLimits& limits = {});

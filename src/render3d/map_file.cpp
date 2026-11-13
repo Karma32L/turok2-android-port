@@ -1,5 +1,6 @@
 #include "map_file.hpp"
 
+#include <text_parse.hpp>
 #include <vfs.hpp>
 
 #include <algorithm>
@@ -176,26 +177,89 @@ std::optional<MapCollision> parseCollision(ByteView section, const MapLimits& l,
     return col;
 }
 
-// Sección 5: actores = contenedor de {cabecera 48 B, componentes}. Se busca el primer SPStart.
-std::optional<SpawnPoint> parseStart(ByteView section, const MapLimits& l) {
-    const auto actors = kex::asContainer(section);
-    if (!actors) return std::nullopt;
-    for (const ByteView& a : *actors) {
-        const auto parts = kex::asContainer(a);
-        if (!parts || parts->empty()) continue;
-        const auto head = kex::asLeaf((*parts)[0]);
-        if (!head || head->stride != kActorHeaderStride || head->count < 1) continue;
-        Cursor c(head->element(0));
-        std::uint32_t type = 0;
-        SpawnPoint sp;
-        Vec3 scale, rot;
-        if (!c.u32(type) || type != kActorSpStart) continue;
-        if (!readVec3(c, sp.pos) || !readVec3(c, scale) || !readVec3(c, rot)) continue;
-        if (!within(sp.pos, l.maxCoord) || std::fabs(rot.x) > l.maxAngle) continue;
-        sp.yaw = rot.x;
-        return sp;
+// Ruta de un componente: normalizada por el VFS y con la extensión esperada; "" si no lo es
+std::string componentPath(std::string_view value, std::string_view ext) {
+    const auto norm = vfs::normalizePath(value);
+    return norm && endsWith(*norm, ext) ? *norm : std::string{};
+}
+
+bool usedComponent(std::string_view name) {
+    return name == "kexRenderMeshComponent" || name == "kexStaticMeshComponent" || name == "kexWorldComponent" ||
+           name == "kexEnemyAIComponent";
+}
+
+// Aplica las claves que usa el port de un componente {nombre, [clave, valor, …]}.
+// false si la estructura es inválida (el actor se omite). Solo se leen las cadenas de los
+// componentes que se usan: los demás (p. ej. kexScriptComponent, con valores terminados en
+// '\n' y cientos de pares) no se interpretan. Un valor ilegible o fuera de rango se ignora.
+bool applyComponent(ByteView comp, const MapLimits& l, MapActor& a) {
+    const auto parts = kex::asContainer(comp);
+    if (!parts || parts->size() != 2) return false;
+    const auto name = kex::leafString((*parts)[0]);
+    const auto kv = kex::asContainer((*parts)[1]);
+    if (!name || !kv || kv->size() % 2 != 0) return false;
+    const std::string_view compName = *name;
+    if (!usedComponent(compName)) return true;
+    if (kv->size() > 2 * l.maxProperties) return false;
+    if (compName == "kexEnemyAIComponent") a.enemy = true;
+    for (std::size_t i = 0; i + 1 < kv->size(); i += 2) {
+        const auto key = kex::leafString((*kv)[i]);
+        const auto value = kex::leafString((*kv)[i + 1]);
+        if (!key || !value) continue;
+        const std::string_view k = *key, v = *value;
+        if (compName == "kexRenderMeshComponent") {
+            if (k == "mesh") a.skinnedMesh = componentPath(v, ".skinnedmesh");
+            else if (k == "anim") a.anim = componentPath(v, ".anim");
+        } else if (compName == "kexStaticMeshComponent") {
+            if (k == "mesh") a.staticMesh = componentPath(v, ".staticmesh");
+        } else if (compName == "kexWorldComponent") {
+            if (k == "bTrackGround") {
+                a.trackGround = v == "1";
+            } else if (k == "heightOffset") {
+                const auto f = render::text::parseNumber(v);
+                if (f && finiteWithin(*f, l.maxCoord)) a.heightOffset = *f;
+            }
+        } else if (k == "startAnimID") {  // kexEnemyAIComponent
+            std::uint32_t id = 0;
+            if (render::text::parseInt(v, id)) a.startAnim = id;
+        }
     }
-    return std::nullopt;
+    return true;
+}
+
+// Actor = contenedor {[0] cabecera 48 B, [1] componentes (opcional)}
+bool parseActor(ByteView node, const MapLimits& l, MapActor& a) {
+    const auto parts = kex::asContainer(node);
+    if (!parts || parts->empty()) return false;
+    const auto head = kex::asLeaf((*parts)[0]);
+    if (!head || head->stride != kActorHeaderStride || head->count != 1) return false;
+    Cursor c(head->element(0));
+    if (!c.u32(a.type) || !readVec3(c, a.pos) || !readVec3(c, a.scale) || !readVec3(c, a.rot) || !c.u32(a.tag)) {
+        return false;
+    }
+    // La escala no se valida aquí: hay actores con escala 0 a propósito (ocultos); el que dibuja decide
+    if (!within(a.pos, l.maxCoord) || !within(a.rot, l.maxAngle) || !within(a.scale, l.maxScale)) return false;
+    if (parts->size() < 2) return true;
+    const auto comps = kex::asContainer((*parts)[1]);
+    if (!comps || comps->size() > l.maxComponents) return false;
+    for (const ByteView& comp : *comps)
+        if (!applyComponent(comp, l, a)) return false;
+    return true;
+}
+
+// Sección 5: contenedor de actores. Sección vacía o ilegible = sin actores (no invalida el mapa).
+void parseActors(ByteView section, const MapLimits& l, MapData& map) {
+    const auto actors = kex::asContainer(section);
+    if (!actors) return;
+    for (const ByteView& node : *actors) {
+        MapActor a;
+        if (map.actors.size() >= l.maxActors || !parseActor(node, l, a)) {
+            ++map.skippedActors;
+            continue;
+        }
+        if (a.type == kActorSpStart && !map.start) map.start = SpawnPoint{a.pos, a.rot.x};
+        map.actors.push_back(std::move(a));
+    }
 }
 
 }  // namespace
@@ -214,7 +278,7 @@ std::optional<MapData> parseMap(ByteView bytes, std::string* err, const MapLimit
     map.skyLayers = parseSkyLayers((*root)[1], limits);
     map.collision = parseCollision((*root)[2], limits, map.collisionError);
     if (map.collision) map.collisionError.clear();
-    map.start = parseStart((*root)[5], limits);
+    parseActors((*root)[5], limits, map);
 
     const auto areas = kex::asContainer((*root)[4], &why);
     if (!areas) return fail(err, "sección 4: " + why);

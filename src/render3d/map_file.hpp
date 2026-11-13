@@ -4,9 +4,11 @@
 //   - sección 1: material del cielo y capas de cielo (opcional);
 //   - sección 2: malla de colisión por sectores (opcional; si es inválida se descarta);
 //   - sección 4: instancias de .staticmesh por área (posición, escala, rotación, bbox);
-//   - sección 5: actor de inicio del jugador (tipo 100 = kActor_SPStart, opcional).
+//   - sección 5: actores (tipo, transformación y los componentes de texto que usa el port:
+//     mallas, animación, apoyo en el suelo) y el inicio del jugador (tipo 100 = kActor_SPStart).
 // Errores estructurales en la raíz o en la sección 4 invalidan el mapa; una instancia con
-// valores absurdos o ruta insegura se omite y se cuenta. Los actores mal formados se ignoran.
+// valores absurdos o ruta insegura se omite y se cuenta. Los actores mal formados se omiten y se
+// cuentan; un componente con ruta insegura o número inválido pierde solo ese valor.
 #pragma once
 
 #include <cstddef>
@@ -29,6 +31,20 @@ struct MeshInstance {
 struct SpawnPoint {
     Vec3 pos;
     float yaw = 0.0f;  // radianes, convención del .map (ver instanceRotation)
+};
+
+// Actor de la sección 5 (ver docs/FORMATS.md, "Actores"). Las rutas vienen ya normalizadas por
+// el VFS y con la extensión comprobada; "" si el actor no tiene ese componente.
+struct MapActor {
+    std::uint32_t type = 0;  // kActor_* de defs/common.txt (0xFFFFFFFF = genérico)
+    Vec3 pos, scale{1, 1, 1}, rot;
+    std::uint32_t tag = 0;  // u32 @40 sin identificar (¿id de warp?)
+    std::string skinnedMesh, anim;  // kexRenderMeshComponent
+    std::string staticMesh;         // kexStaticMeshComponent
+    bool trackGround = false;       // kexWorldComponent.bTrackGround: se apoya en el suelo
+    float heightOffset = 0.0f;
+    bool enemy = false;             // tiene kexEnemyAIComponent
+    std::uint32_t startAnim = 0;    // kexEnemyAIComponent.startAnimID (0 = por defecto)
 };
 
 // Capa de cielo (sección 1 [1], 44 B; idéntica a un bloque SkyLayer_* de defs/skyInfo.txt)
@@ -84,6 +100,8 @@ struct MapData {
     std::optional<MapCollision> collision;
     std::string collisionError;        // motivo si la sección 2 existía pero era inválida
     std::optional<SpawnPoint> start;   // actor kActor_SPStart
+    std::vector<MapActor> actors;      // todos los actores válidos (incluido el inicio)
+    std::size_t skippedActors = 0;     // estructura o valores inválidos
     std::size_t areas = 0;
     std::size_t skippedInstances = 0;  // valores no finitos/absurdos o ruta inválida
 };
@@ -98,6 +116,9 @@ struct MapLimits {
     std::size_t maxCollisionPoints = 1u << 16;   // índices u16
     std::size_t maxCollisionSectors = 0xFFFF;    // 0xFFFF reservado para kNoLink
     std::size_t maxCollisionAreas = 1u << 16;
+    std::size_t maxActors = 1u << 14;   // máximo real: 682
+    std::size_t maxComponents = 64;     // por actor
+    std::size_t maxProperties = 256;    // pares clave/valor por componente usado
 };
 
 constexpr std::uint32_t kMapSections = 9;
@@ -105,6 +126,10 @@ constexpr std::uint32_t kMapSections = 9;
 constexpr std::uint32_t kInstanceMinStride = 64;
 constexpr std::uint32_t kActorHeaderStride = 48;
 constexpr std::uint32_t kActorSpStart = 100;
+constexpr std::uint32_t kActorWarpPoint = 20001;
+constexpr std::uint32_t kActorMiscPortal = 50100;
+// kActor_Item_* (salud, LifeForce, armas y munición recogibles) ocupan 1701..3011
+inline bool isPickupActor(std::uint32_t type) { return type >= 1700 && type < 3100; }
 constexpr std::uint32_t kSkyLayerStride = 44;
 constexpr std::uint32_t kCollisionPointStride = 16;
 constexpr std::uint32_t kCollisionSectorStride = 18;

@@ -239,7 +239,9 @@ Las rutas de malla vienen en el propio mapa, así que no hace falta `defs/actors
 | `kexEnemyAIComponent` | `startAnimID` |
 
 El resto (`kexLightComponent`, `kexRenderSpriteComponent`, `kexScriptComponent`,
-`kexEventLinkComponent`, …) se ignora. Validado en los 177 mapas: todas las cabeceras miden 48 B, todos
+`kexEventLinkComponent`, …) se ignora sin leer sus cadenas: `kexScriptComponent` trae valores
+terminados en `\n` y hasta cientos de pares. 15 actores tienen escala 0 a propósito (ocultos): se
+conservan pero no se dibujan. Validado en los 177 mapas: todas las cabeceras miden 48 B, todos
 los componentes tienen 2 nodos y todas las claves y valores son cadenas. Máximo: 682 actores por mapa.
 
 Port_of_Adia_1 tiene 155 actores: 1 enemigo (`kActor_AI_Endtrail`), 30 con `.skinnedmesh`

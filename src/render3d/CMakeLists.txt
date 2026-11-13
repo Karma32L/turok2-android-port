@@ -9,6 +9,8 @@ add_library(turok2_render3d_core STATIC
     static_mesh.cpp
     kmat.cpp
     level_builder.cpp
+    material_resolver.cpp
+    level_actors.cpp
     skinned_mesh.cpp
     anim_file.cpp
     skeleton.cpp

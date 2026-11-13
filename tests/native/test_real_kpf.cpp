@@ -6,6 +6,7 @@
 
 #include <anim_file.hpp>
 #include <kmat.hpp>
+#include <level_actors.hpp>
 #include <level_builder.hpp>
 #include <map_file.hpp>
 #include <skeleton.hpp>
@@ -45,7 +46,7 @@ TEST(real_kpf_mapas_y_mallas) {
         std::printf("  no se pudo abrir TURK2_KPF='%s': %s\n", path, err.c_str());
         return;
     }
-    std::size_t withCollision = 0, sectors = 0, skyLayers = 0;
+    std::size_t withCollision = 0, sectors = 0, skyLayers = 0, actors = 0, skippedActors = 0;
     std::size_t maps = 0, mapsOk = 0, meshes = 0, meshesOk = 0, empty = 0, instances = 0;
     std::size_t kmats = 0, kmatsOk = 0, materials = 0, malformed = 0;
     for (const std::string& p : layer->list()) {
@@ -75,6 +76,8 @@ TEST(real_kpf_mapas_y_mallas) {
                 ++mapsOk;
                 instances += m->instances.size();
                 skyLayers += m->skyLayers.size();
+                actors += m->actors.size();
+                skippedActors += m->skippedActors;
                 if (m->collision) {
                     ++withCollision;
                     sectors += m->collision->sectors.size();
@@ -98,7 +101,9 @@ TEST(real_kpf_mapas_y_mallas) {
                 malformed);
     std::printf("  colisión: %zu/%zu mapas, %zu sectores; %zu capas de cielo\n", withCollision, maps, sectors,
                 skyLayers);
+    std::printf("  actores: %zu válidos, %zu omitidos\n", actors, skippedActors);
     CHECK(maps > 0 && mapsOk == maps && withCollision == maps);
+    CHECK(actors > 0 && skippedActors == 0);
     CHECK(kmats > 0 && kmatsOk == kmats && malformed == 0);
     CHECK(meshes > 0 && meshesOk * 100 >= meshes * 99);  // las rechazadas son mallas mp/ corruptas
 
@@ -124,6 +129,16 @@ TEST(real_kpf_mapas_y_mallas) {
                     c.areas.size(), water, c.sectors.size());
         CHECK(c.points.size() == 556 && c.areas.size() == 122 && c.sectors.size() == 824 && water == 31);
     }
+    const render3d::ActorSet set = render3d::buildActors(fs, geo->actors);
+    std::size_t enemies = 0;
+    for (const auto& a : geo->actors) enemies += a.enemy;
+    std::printf("  Port_of_Adia_1 actores: %zu en el mapa (%zu enemigos), %zu colocados, %zu sin modelo, "
+                "%zu omitidos; %zu modelos (%zu fallidos), %zu materiales (%zu sin definir), %zu marcadores\n",
+                geo->actors.size(), enemies, set.stats.placed, set.stats.withoutModel, set.stats.skipped,
+                set.models.size(), set.stats.modelsFailed, set.materials.size(), set.stats.materialsMissing,
+                set.markers.size());
+    CHECK(geo->actors.size() == 155 && enemies == 1);
+    CHECK(set.stats.placed > 0 && set.stats.skipped == 0 && set.stats.modelsFailed == 0);
 }
 
 // .skinnedmesh y .anim del .kpf: todos deben parsear y cada .anim debe casar con su malla homónima
